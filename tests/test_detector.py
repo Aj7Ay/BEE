@@ -120,6 +120,23 @@ def test_detect_onnx_heuristic(tmp_path):
     assert confidence == Confidence.INFERRED
 
 
+def test_detect_onnx_rejects_random_bytes_starting_with_0x08(tmp_path):
+    # Regression test: the old detector classified ANY file whose first
+    # byte was 0x08 as onnx (~1/256 of all random binaries). These bytes
+    # start with a valid-looking tag but fail to decode as a second field.
+    path = tmp_path / "model.bin"
+    path.write_bytes(b"\x08" + b"\xff" * 10)
+    fmt, _, _ = detect_format(path)
+    assert fmt != "onnx"
+
+
+def test_detect_onnx_rejects_single_field_only(tmp_path):
+    path = tmp_path / "model.bin"
+    path.write_bytes(b"\x08\x00")  # one valid field, nothing after it
+    fmt, _, _ = detect_format(path)
+    assert fmt != "onnx"
+
+
 def test_detect_unknown(tmp_path):
     path = tmp_path / "model.bin"
     builders.write_unknown(path)

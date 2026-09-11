@@ -40,6 +40,8 @@ def inspect_command(
     typer.echo(f"Declared format:  {artifact.declared_format}")
     typer.echo(f"Detected format:  {artifact.detected_format} ({artifact.format_confidence.value})")
     typer.echo(f"Magic bytes:      {artifact.magic_bytes_hex}")
+    if artifact.is_symlink:
+        typer.echo(f"Symlink:          True -> {artifact.symlink_target}")
     if finding is not None:
         typer.echo(f"Finding:          {finding.id} [{finding.severity.value}] {finding.title}")
     else:

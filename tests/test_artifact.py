@@ -43,3 +43,25 @@ def test_artifact_from_file_matching_formats(tmp_path):
     artifact = Artifact.from_file(path)
     assert artifact.declared_format == "gguf"
     assert artifact.detected_format == "gguf"
+
+
+def test_artifact_from_file_regular_file_is_not_a_symlink(tmp_path):
+    path = tmp_path / "model.gguf"
+    builders.write_gguf(path)
+    artifact = Artifact.from_file(path)
+    assert artifact.is_symlink is False
+    assert artifact.symlink_target is None
+
+
+def test_artifact_from_file_records_symlink_target(tmp_path):
+    real = tmp_path / "real.gguf"
+    builders.write_gguf(real)
+    link = tmp_path / "link.gguf"
+    link.symlink_to(real)
+
+    artifact = Artifact.from_file(link)
+
+    assert artifact.is_symlink is True
+    assert artifact.symlink_target == str(real.resolve())
+    # Identity is still computed from the target's actual content.
+    assert artifact.detected_format == "gguf"

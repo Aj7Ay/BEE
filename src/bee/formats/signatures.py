@@ -181,14 +181,78 @@ def detect_pickle(path: Path) -> DetectionResult | None:
     )
 
 
+def _read_varint(data: bytes, pos: int) -> tuple[int, int] | None:
+    """Read a protobuf varint starting at `pos`. Returns (value, next_pos),
+    or None if the bytes at `pos` don't form a valid, terminated varint
+    within protobuf's 10-byte limit."""
+    result = 0
+    shift = 0
+    start = pos
+    while True:
+        if pos >= len(data) or pos - start >= 10:
+            return None
+        byte = data[pos]
+        result |= (byte & 0x7F) << shift
+        pos += 1
+        if not (byte & 0x80):
+            return result, pos
+        shift += 7
+
+
+_ONNX_SNIFF_BYTES = 4096
+
+
+def _looks_like_protobuf(data: bytes, min_fields: int = 2) -> bool:
+    """Generic structural validation of a protobuf byte stream: walk
+    `min_fields` consecutive tag/value pairs, checking that each tag decodes
+    to a plausible field number and a known wire type, and that
+    length-delimited fields declare a length that actually fits. This is
+    deliberately schema-agnostic (not specific to ONNX's field numbers) —
+    it rejects the overwhelming majority of non-protobuf byte sequences
+    without asserting exact knowledge of ONNX's proto definition.
+    """
+    pos = 0
+    for _ in range(min_fields):
+        tag = _read_varint(data, pos)
+        if tag is None:
+            return False
+        tag_value, pos = tag
+        field_number = tag_value >> 3
+        wire_type = tag_value & 0x7
+        if field_number == 0 or wire_type not in (0, 1, 2, 5):
+            return False
+        if wire_type == 0:  # varint
+            value = _read_varint(data, pos)
+            if value is None:
+                return False
+            _, pos = value
+        elif wire_type == 1:  # 64-bit
+            pos += 8
+        elif wire_type == 5:  # 32-bit
+            pos += 4
+        else:  # wire_type == 2: length-delimited
+            length_info = _read_varint(data, pos)
+            if length_info is None:
+                return False
+            length, pos = length_info
+            if length < 0 or pos + length > len(data):
+                return False
+            pos += length
+        if pos > len(data):
+            return False
+    return True
+
+
 def detect_onnx(path: Path) -> DetectionResult | None:
-    prefix = _read_prefix(path, 1)
-    if prefix != b"\x08":
+    prefix = _read_prefix(path, _ONNX_SNIFF_BYTES)
+    if not prefix or prefix[0] != 0x08:
+        return None
+    if not _looks_like_protobuf(prefix):
         return None
     return (
         "onnx",
         Confidence.INFERRED,
-        [Evidence(type="header_field", value="protobuf_field_tag_0x08",
+        [Evidence(type="header_field", value="protobuf_structure_2_fields",
                    source="local_filesystem", confidence=Confidence.INFERRED)],
     )
 

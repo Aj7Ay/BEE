@@ -20,3 +20,15 @@ def test_init_is_idempotent(tmp_path, monkeypatch):
     result = runner.invoke(app, ["init"])
     assert result.exit_code == 0
     assert "already exists" in result.output
+
+
+def test_init_respects_custom_db_path(tmp_path, monkeypatch):
+    # Regression test: config.yaml used to always land in ./.bee/ even when
+    # --db pointed the database somewhere else, splitting the workspace.
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["--db", "other/nested/bee.db", "init"])
+
+    assert result.exit_code == 0
+    assert (tmp_path / "other" / "nested" / "bee.db").exists()
+    assert (tmp_path / "other" / "nested" / "config.yaml").exists()
+    assert not (tmp_path / ".bee").exists()

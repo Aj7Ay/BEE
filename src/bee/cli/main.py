@@ -5,9 +5,11 @@ from pathlib import Path
 import typer
 
 from bee import __version__
+from bee.cli.history import history_command
 from bee.cli.init import init_command
 from bee.cli.inspect import inspect_command
 from bee.cli.scan import scan_command
+from bee.cli.show import show_command
 from bee.cli.state import AppState, OutputFormat
 
 app = typer.Typer(help="BEE - AI model supply-chain vetting CLI.")
@@ -43,3 +45,5 @@ def main(
 app.command("init")(init_command)
 app.command("scan")(scan_command)
 app.command("inspect")(inspect_command)
+app.command("history")(history_command)
+app.command("show")(show_command)

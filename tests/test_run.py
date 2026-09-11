@@ -32,3 +32,26 @@ def test_run_from_scan_assigns_id_and_summary():
     assert run.target_path == "./models"
     assert len(run.id) > 0
     assert run.summary.artifact_count == 1
+
+
+def test_deterministic_run_has_stable_id_and_timestamp_for_identical_input():
+    run_a = Run.from_scan(
+        target_path="./models", artifacts=[_artifact()], findings=[_finding()], deterministic=True
+    )
+    run_b = Run.from_scan(
+        target_path="./models", artifacts=[_artifact()], findings=[_finding()], deterministic=True
+    )
+    assert run_a.id == run_b.id
+    assert run_a.created_at == run_b.created_at
+
+
+def test_deterministic_run_id_changes_with_content():
+    run_a = Run.from_scan(target_path="./models", artifacts=[_artifact()], findings=[], deterministic=True)
+    run_b = Run.from_scan(target_path="./other", artifacts=[_artifact()], findings=[], deterministic=True)
+    assert run_a.id != run_b.id
+
+
+def test_non_deterministic_runs_have_distinct_ids():
+    run_a = Run.from_scan(target_path="./models", artifacts=[_artifact()], findings=[])
+    run_b = Run.from_scan(target_path="./models", artifacts=[_artifact()], findings=[])
+    assert run_a.id != run_b.id

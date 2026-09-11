@@ -38,3 +38,12 @@ def load_run(db_path: Path, run_id: str) -> Run | None:
     if row is None:
         return None
     return Run.model_validate_json(row[0])
+
+
+def list_runs(db_path: Path) -> list[Run]:
+    """All stored runs, most recently created first."""
+    if not db_path.exists():
+        return []
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute("SELECT data FROM runs ORDER BY created_at DESC").fetchall()
+    return [Run.model_validate_json(row[0]) for row in rows]

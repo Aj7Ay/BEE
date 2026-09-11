@@ -36,6 +36,8 @@ class Artifact(BaseModel):
     detected_format: str
     format_confidence: Confidence
     magic_bytes_hex: str
+    is_symlink: bool = False
+    symlink_target: str | None = None
 
     @classmethod
     def from_file(cls, path: Path) -> "Artifact":
@@ -44,6 +46,10 @@ class Artifact(BaseModel):
         declared_format = declared_format_from_extension(path)
         detected_format, format_confidence, _evidence = detect_format(path)
         magic_bytes_hex = read_magic_bytes_hex(path)
+        is_symlink = path.is_symlink()
+        # resolve(strict=False) so a broken symlink still records where it
+        # points, instead of raising.
+        symlink_target = str(path.resolve(strict=False)) if is_symlink else None
         return cls(
             path=str(path),
             size=size,
@@ -53,4 +59,6 @@ class Artifact(BaseModel):
             detected_format=detected_format,
             format_confidence=format_confidence,
             magic_bytes_hex=magic_bytes_hex,
+            is_symlink=is_symlink,
+            symlink_target=symlink_target,
         )

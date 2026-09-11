@@ -39,6 +39,16 @@ bee inspect ./models/model.safetensors
 # JSON output, for scripting or CI
 # --format is a root option, so it comes before the subcommand
 bee --format json scan ./models
+
+# Fail the build if anything at or above a severity is found
+bee scan ./models --fail-on high
+
+# Reproducible output: identical input -> byte-identical JSON
+bee --format json scan ./models --deterministic
+
+# Past runs, and re-displaying one by id
+bee history
+bee show <run-id>
 ```
 
 ### Example
@@ -63,9 +73,16 @@ mismatch a renamed or mislabeled artifact would produce.
 
 ## What BEE detects today
 
-Structural signatures for: SafeTensors, GGUF, NumPy, HDF5/Keras, Pickle,
-PyTorch (zip-based), ONNX (heuristic), and generic zip/tar/gzip archives.
-Anything else is reported as `unknown` rather than guessed.
+Structural signatures for: SafeTensors, GGUF, NumPy, HDF5/Keras, Pickle
+(all protocols, resistant to trailing-byte padding), PyTorch (zip-based),
+ONNX (structural heuristic), and generic zip/tar/gzip archives. Anything
+else is reported as `unknown` rather than guessed.
+
+`bee scan` also flags:
+- symlinks whose target resolves outside the scanned directory
+  (`BEE-SYM-001`)
+- files it couldn't read, without aborting the rest of the scan
+  (`BEE-IO-001`)
 
 ## Development
 

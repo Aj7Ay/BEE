@@ -99,3 +99,102 @@ def test_scan_persists_run_to_db(tmp_path, monkeypatch):
     runner.invoke(app, ["scan", str(file_path)])
 
     assert (tmp_path / ".bee" / "bee.db").exists()
+
+
+def test_scan_fail_on_exits_nonzero_when_threshold_met(tmp_path, monkeypatch):
+    import pickle
+
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / "models"
+    target.mkdir()
+    (target / "evil.safetensors").write_bytes(pickle.dumps({"x": 1}, protocol=4))  # -> critical
+
+    result = runner.invoke(app, ["scan", str(target), "--fail-on", "high"])
+
+    assert result.exit_code == 1
+
+
+def test_scan_fail_on_exits_zero_when_threshold_not_met(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / "models"
+    target.mkdir()
+    builders.write_safetensors(target / "model.pt")  # -> low severity
+
+    result = runner.invoke(app, ["scan", str(target), "--fail-on", "critical"])
+
+    assert result.exit_code == 0
+
+
+def test_scan_fail_on_rejects_invalid_severity(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    file_path = tmp_path / "model.gguf"
+    builders.write_gguf(file_path)
+
+    result = runner.invoke(app, ["scan", str(file_path), "--fail-on", "extreme"])
+
+    assert result.exit_code != 0
+    assert "must be one of" in result.output
+
+
+def test_scan_deterministic_produces_identical_output_across_runs(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / "models"
+    target.mkdir()
+    builders.write_gguf(target / "model.gguf")
+
+    first = runner.invoke(app, ["--format", "json", "scan", str(target), "--deterministic"])
+    second = runner.invoke(app, ["--format", "json", "scan", str(target), "--deterministic"])
+
+    assert first.exit_code == 0
+    assert second.exit_code == 0
+    assert first.output == second.output
+
+
+def test_scan_without_deterministic_flag_varies_run_id(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / "models"
+    target.mkdir()
+    builders.write_gguf(target / "model.gguf")
+
+    first = json.loads(runner.invoke(app, ["--format", "json", "scan", str(target)]).output)
+    second = json.loads(runner.invoke(app, ["--format", "json", "scan", str(target)]).output)
+
+    assert first["id"] != second["id"]
+
+
+def test_scan_ignores_directory_named_bee_that_is_not_the_workspace(tmp_path, monkeypatch):
+    # Regression test: exclusion must be by *location* of the actual .bee
+    # workspace, not by matching the name ".bee" anywhere in the tree —
+    # a real, unrelated directory happening to be named ".bee" must still
+    # be scanned.
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / "models"
+    nested_bee = target / "data" / ".bee"
+    nested_bee.mkdir(parents=True)
+    builders.write_gguf(nested_bee / "not_our_workspace.gguf")
+
+    result = runner.invoke(app, ["--format", "json", "scan", str(target)])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    paths = [a["path"] for a in payload["artifacts"]]
+    assert any("not_our_workspace.gguf" in p for p in paths)
+
+
+def test_scan_symlink_escaping_root_is_flagged(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    outside = tmp_path / "outside.gguf"
+    builders.write_gguf(outside)
+    target = tmp_path / "models"
+    target.mkdir()
+    (target / "link.gguf").symlink_to(outside)
+
+    result = runner.invoke(app, ["--format", "json", "scan", str(target)])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    finding_ids = [f["id"] for f in payload["findings"]]
+    assert "BEE-SYM-001" in finding_ids
+    artifact = payload["artifacts"][0]
+    assert artifact["is_symlink"] is True
+    assert artifact["symlink_target"] == str(outside.resolve())
