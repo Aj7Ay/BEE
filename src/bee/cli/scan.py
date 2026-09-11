@@ -7,7 +7,7 @@ import typer
 from bee.cli.state import OutputFormat
 from bee.core.artifact import Artifact
 from bee.core.run import Run
-from bee.evidence.finding import Finding
+from bee.evidence.finding import Confidence, Evidence, Finding, Severity
 from bee.evidence.mismatch import check_mismatch
 from bee.reports.json import render_run_json
 from bee.reports.terminal import render_run
@@ -33,7 +33,30 @@ def scan_command(
     artifacts: list[Artifact] = []
     findings: list[Finding] = []
     for file_path in files:
-        artifact = Artifact.from_file(file_path)
+        try:
+            artifact = Artifact.from_file(file_path)
+        except OSError as exc:
+            # A file we can't read (permissions, race with deletion, a
+            # dangling special file, ...) must not kill the rest of the
+            # scan. Record it as a finding and keep going.
+            findings.append(
+                Finding(
+                    id="BEE-IO-001",
+                    severity=Severity.HIGH,
+                    title="Artifact could not be read",
+                    description=f"Reading this file failed: {exc}",
+                    artifact_path=str(file_path),
+                    evidence=[
+                        Evidence(
+                            type="os_error",
+                            value=str(exc),
+                            source="local_filesystem",
+                            confidence=Confidence.VERIFIED,
+                        ),
+                    ],
+                )
+            )
+            continue
         artifacts.append(artifact)
         finding = check_mismatch(artifact)
         if finding is not None:

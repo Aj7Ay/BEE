@@ -5,13 +5,10 @@ environment. It establishes an artifact's identity, detects its real
 structural format (never trusting the file extension), and flags
 mismatches between the two.
 
-This is early — **0.1, the foundation release**. It covers local-file
-identity and format detection only. Real static security analysis
+This is early. Static security analysis beyond format-mismatch detection
 (pickle call-graph analysis, SafeTensors bounds checks, GGUF metadata
 inspection, and more), provenance, supply-chain checks, licensing, and
-policy enforcement are planned in later releases — see
-[`docs/superpowers/specs`](docs/superpowers/specs) for the design behind
-where this is headed.
+policy enforcement are planned in later releases.
 
 ## Install
 
@@ -40,7 +37,8 @@ bee scan ./models
 bee inspect ./models/model.safetensors
 
 # JSON output, for scripting or CI
-bee scan ./models --format json
+# --format is a root option, so it comes before the subcommand
+bee --format json scan ./models
 ```
 
 ### Example
@@ -56,7 +54,7 @@ Artifacts scanned: 2
 │ models/model.gguf │ gguf   │ 16   │ -        │
 │ models/weights.pt │ numpy  │ 24   │ 1        │
 └───────────────────┴────────┴──────┴──────────┘
-Findings: 0 critical, 0 high, 1 medium, 0 low, 0 info
+Findings: 0 critical, 0 high, 0 medium, 1 low, 0 info
 ```
 
 `weights.pt` is flagged (`BEE-FMT-001`) because its extension claims

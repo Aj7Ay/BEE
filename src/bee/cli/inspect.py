@@ -18,7 +18,11 @@ def inspect_command(
 ) -> None:
     """Show a detailed identity and format report for a single artifact."""
     state = ctx.obj
-    artifact = Artifact.from_file(path)
+    try:
+        artifact = Artifact.from_file(path)
+    except OSError as exc:
+        typer.echo(f"Error: could not read {path}: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
     finding = check_mismatch(artifact)
 
     if state.output_format is OutputFormat.JSON:

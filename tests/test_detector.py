@@ -1,4 +1,7 @@
+import pickle
 from pathlib import Path
+
+import pytest
 
 from bee.evidence.finding import Confidence
 from bee.formats.detector import declared_format_from_extension, detect_format
@@ -70,6 +73,40 @@ def test_detect_tar(tmp_path):
 def test_detect_pickle(tmp_path):
     path = tmp_path / "model.bin"
     builders.write_pickle(path)
+    fmt, confidence, _ = detect_format(path)
+    assert fmt == "pickle"
+    assert confidence == Confidence.SUPPORTED
+
+
+@pytest.mark.parametrize("protocol", [0, 1, 2, 3, 4, 5])
+def test_detect_pickle_all_protocols(tmp_path, protocol):
+    path = tmp_path / "model.bin"
+    path.write_bytes(pickle.dumps({"x": 1}, protocol=protocol))
+    fmt, confidence, _ = detect_format(path)
+    assert fmt == "pickle", f"protocol {protocol} not detected"
+    assert confidence == Confidence.SUPPORTED
+
+
+@pytest.mark.parametrize(
+    "transform",
+    [
+        pytest.param(lambda payload: payload + b"\x00", id="trailing_null"),
+        pytest.param(lambda payload: payload + b"\n", id="trailing_newline"),
+        pytest.param(lambda payload: payload + b"\x00" * 1024, id="trailing_1kb_padding"),
+        pytest.param(lambda payload: payload + b"garbage-not-a-pickle-opcode", id="trailing_garbage"),
+    ],
+)
+def test_detect_pickle_survives_trailing_bytes(tmp_path, transform):
+    # The evasion this guards against: `cat payload >> file; printf '\0' >> file`.
+    # pickle.load() stops at STOP and ignores everything after it, so trailing
+    # bytes must not be able to hide a pickle from the detector.
+    payload = pickle.dumps({"x": 1}, protocol=4)
+    path = tmp_path / "evil.safetensors"
+    path.write_bytes(transform(payload))
+
+    # Confirm the premise: this file still loads and executes as a pickle.
+    assert pickle.loads(payload) == {"x": 1}
+
     fmt, confidence, _ = detect_format(path)
     assert fmt == "pickle"
     assert confidence == Confidence.SUPPORTED

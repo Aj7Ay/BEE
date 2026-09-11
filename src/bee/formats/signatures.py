@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import pickletools
 import struct
 import zipfile
 from pathlib import Path
@@ -133,22 +134,49 @@ def detect_tar(path: Path) -> DetectionResult | None:
     )
 
 
+# Bounded prefix read for pickle sniffing: real malicious payloads (a few
+# opcodes constructing a small object and invoking __reduce__) are tiny —
+# a few KB at most. This bound keeps detection O(1) in file size instead of
+# genops potentially walking a multi-gigabyte disguised file. A legitimate
+# pickle whose STOP opcode lies beyond this prefix is reported as
+# "unknown" rather than misclassified — a known, documented limitation,
+# not a silent false negative on the attack this detector exists for.
+_PICKLE_SNIFF_BYTES = 1_048_576
+
+
 def detect_pickle(path: Path) -> DetectionResult | None:
     try:
         with path.open("rb") as f:
-            head = f.read(2)
-            if len(head) < 2 or head[0] != 0x80 or head[1] > 5:
-                return None
-            f.seek(-1, 2)
-            tail = f.read(1)
+            prefix = f.read(_PICKLE_SNIFF_BYTES)
     except OSError:
         return None
-    if tail != b".":
+    if not prefix:
         return None
+
+    protocol: int | None = None
+    try:
+        for opcode, arg, _pos in pickletools.genops(prefix):
+            if opcode.name == "PROTO":
+                protocol = arg
+            if opcode.name == "STOP":
+                break
+        else:
+            # Exhausted the prefix without ever seeing STOP: either this
+            # isn't a pickle, or it's one bigger than our sniff bound.
+            # Either way, we can't conclusively call it pickle.
+            return None
+    except (ValueError, EOFError, IndexError):
+        return None
+
+    # pickle.load() stops at the first STOP opcode and ignores everything
+    # after it — so do we. Anything appended past this point (a trailing
+    # null byte, a newline, arbitrary padding) does not change whether the
+    # file executes as a pickle, and must not be able to hide it from us.
+    protocol_label = f"pickle_protocol_{protocol}" if protocol is not None else "pickle_protocol_0_or_1"
     return (
         "pickle",
         Confidence.SUPPORTED,
-        [Evidence(type="header_field", value=f"pickle_protocol_{head[1]}",
+        [Evidence(type="header_field", value=protocol_label,
                    source="local_filesystem", confidence=Confidence.SUPPORTED)],
     )
 
