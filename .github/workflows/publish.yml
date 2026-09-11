@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/bee
+      url: https://pypi.org/p/bee-guard
     permissions:
       id-token: write
     steps:

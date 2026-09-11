@@ -16,7 +16,7 @@ where this is headed.
 ## Install
 
 ```bash
-pip install bee
+pip install bee-guard
 ```
 
 or, for local development:
