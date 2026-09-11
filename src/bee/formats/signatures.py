@@ -134,38 +134,41 @@ def detect_tar(path: Path) -> DetectionResult | None:
     )
 
 
-# Bounded prefix read for pickle sniffing: real malicious payloads (a few
-# opcodes constructing a small object and invoking __reduce__) are tiny —
-# a few KB at most. This bound keeps detection O(1) in file size instead of
-# genops potentially walking a multi-gigabyte disguised file. A legitimate
-# pickle whose STOP opcode lies beyond this prefix is reported as
-# "unknown" rather than misclassified — a known, documented limitation,
-# not a silent false negative on the attack this detector exists for.
-_PICKLE_SNIFF_BYTES = 1_048_576
+# Bound detection by OPCODE COUNT, not by a byte-offset/prefix-size cutoff.
+# An earlier version of this detector read only a fixed byte prefix into
+# memory before parsing it — which meant any pickle payload padded past
+# that prefix (e.g. by embedding it in a multi-megabyte disguised
+# checkpoint) fell outside the sniffed window and was misreported as
+# "unknown", recreating the exact bypass this detector exists to close.
+# Streaming genops() from the open file handle instead means STOP is
+# found at whatever byte offset it actually occurs at, however large the
+# file — a real malicious payload is a handful of opcodes regardless of
+# how much the attacker pads the file around it. The opcode cap below
+# exists only to bound CPU against a pathological "opcode bomb" (millions
+# of tiny opcodes before ever reaching STOP), not to limit how far into
+# the file we're willing to look.
+_MAX_PICKLE_OPCODES = 100_000
 
 
 def detect_pickle(path: Path) -> DetectionResult | None:
+    protocol: int | None = None
+    found_stop = False
     try:
         with path.open("rb") as f:
-            prefix = f.read(_PICKLE_SNIFF_BYTES)
+            for i, (opcode, arg, _pos) in enumerate(pickletools.genops(f)):
+                if i >= _MAX_PICKLE_OPCODES:
+                    break
+                if opcode.name == "PROTO":
+                    protocol = arg
+                if opcode.name == "STOP":
+                    found_stop = True
+                    break
     except OSError:
         return None
-    if not prefix:
+    except (ValueError, EOFError, IndexError):
         return None
 
-    protocol: int | None = None
-    try:
-        for opcode, arg, _pos in pickletools.genops(prefix):
-            if opcode.name == "PROTO":
-                protocol = arg
-            if opcode.name == "STOP":
-                break
-        else:
-            # Exhausted the prefix without ever seeing STOP: either this
-            # isn't a pickle, or it's one bigger than our sniff bound.
-            # Either way, we can't conclusively call it pickle.
-            return None
-    except (ValueError, EOFError, IndexError):
+    if not found_stop:
         return None
 
     # pickle.load() stops at the first STOP opcode and ignores everything

@@ -181,6 +181,25 @@ def test_scan_ignores_directory_named_bee_that_is_not_the_workspace(tmp_path, mo
     assert any("not_our_workspace.gguf" in p for p in paths)
 
 
+def test_scan_reports_result_even_when_db_cannot_be_written(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / "models"
+    target.mkdir()
+    builders.write_gguf(target / "model.gguf")
+
+    # Make the database's parent directory impossible to create: a plain
+    # file already sits where a directory would need to go.
+    (tmp_path / "blocked").write_text("not a directory")
+    bad_db = tmp_path / "blocked" / "bee.db"
+
+    result = runner.invoke(app, ["--db", str(bad_db), "scan", str(target)])
+
+    assert result.exit_code == 0
+    assert "BEE SCAN" in result.output
+    assert "Artifacts scanned: 1" in result.output
+    assert "Warning: could not save run" in result.output
+
+
 def test_scan_symlink_escaping_root_is_flagged(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     outside = tmp_path / "outside.gguf"

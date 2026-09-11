@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import typer
@@ -104,12 +105,20 @@ def scan_command(
     run = Run.from_scan(
         target_path=str(path), artifacts=artifacts, findings=findings, deterministic=deterministic
     )
-    save_run(state.db_path, run)
 
+    # Report first, persist second: a vetting result the operator can see
+    # matters more than a row in the history database. An unwritable DB
+    # (read-only filesystem, permissions, a .bee/bee.db owned by another
+    # user, ...) must not throw away a scan that already completed.
     if state.output_format is OutputFormat.JSON:
         typer.echo(render_run_json(run))
     else:
         render_run(run)
+
+    try:
+        save_run(state.db_path, run)
+    except (sqlite3.Error, OSError) as exc:
+        typer.echo(f"Warning: could not save run to {state.db_path}: {exc}", err=True)
 
     if threshold is not None:
         threshold_rank = _SEVERITY_ORDER.index(threshold)

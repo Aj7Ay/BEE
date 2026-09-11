@@ -112,6 +112,38 @@ def test_detect_pickle_survives_trailing_bytes(tmp_path, transform):
     assert confidence == Confidence.SUPPORTED
 
 
+def test_detect_pickle_survives_multi_megabyte_padding_after_stop(tmp_path):
+    # A prior fix bounded detection to a fixed-size byte prefix (1 MiB) for
+    # CPU safety — which meant padding a payload past that prefix silently
+    # recreated the exact bypass being fixed. 10 MiB of trailing padding,
+    # well beyond any fixed prefix bound, must still be detected.
+    payload = pickle.dumps({"x": 1}, protocol=4)
+    path = tmp_path / "evil.safetensors"
+    path.write_bytes(payload + b"\x00" * (10 * 1024 * 1024))
+
+    fmt, confidence, _ = detect_format(path)
+    assert fmt == "pickle"
+    assert confidence == Confidence.SUPPORTED
+
+
+def test_detect_pickle_with_stop_beyond_one_megabyte(tmp_path):
+    # The more realistic version of the same bug: STOP occurring past 1 MiB
+    # not because of external padding, but because the pickle's own payload
+    # (e.g. a large embedded tensor/buffer) is itself that big — exactly
+    # what a disguised multi-megabyte checkpoint looks like.
+    payload = pickle.dumps({"blob": b"x" * (3 * 1024 * 1024)}, protocol=4)
+    assert len(payload) > 1024 * 1024
+    path = tmp_path / "evil.safetensors"
+    path.write_bytes(payload)
+
+    # Confirm the premise: this still loads as a pickle.
+    assert len(pickle.loads(payload)["blob"]) == 3 * 1024 * 1024
+
+    fmt, confidence, _ = detect_format(path)
+    assert fmt == "pickle"
+    assert confidence == Confidence.SUPPORTED
+
+
 def test_detect_onnx_heuristic(tmp_path):
     path = tmp_path / "model.bin"
     builders.write_onnx_like(path)
