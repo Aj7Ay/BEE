@@ -1,4 +1,5 @@
 # BEE
+![BEE](banner-bee.png)
 
 BEE is a CLI for vetting AI/ML model artifacts before they enter your
 environment. It establishes an artifact's identity, detects its real
