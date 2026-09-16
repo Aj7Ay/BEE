@@ -84,10 +84,12 @@ Structural signatures for: SafeTensors, GGUF, NumPy, HDF5/Keras, Pickle
 ONNX (structural heuristic), and generic zip/tar/gzip archives. Anything
 else is reported as `unknown` rather than guessed.
 
-`bee scan` also flags:
-- symlinks whose target resolves outside the scanned directory
-  (`BEE-SYM-001`) — the target is never opened (so never hashed) unless
-  you pass `--follow-symlinks`
+`bee scan` and `bee inspect` both flag:
+- symlinks whose target resolves outside the scanned/inspected
+  directory (`BEE-SYM-001`) — the target is never opened (so never
+  hashed) unless you pass `--follow-symlinks`; the same rule applies
+  whether you point `inspect` at the symlink directly or `scan` finds
+  it while walking a directory
 - files it couldn't read, without aborting the rest of the scan
   (`BEE-IO-001`)
 
