@@ -62,3 +62,24 @@ class Artifact(BaseModel):
             is_symlink=is_symlink,
             symlink_target=symlink_target,
         )
+
+    @classmethod
+    def unresolved_symlink(cls, path: Path, symlink_target: str) -> "Artifact":
+        """An Artifact for a symlink whose target was deliberately never
+        opened — because it resolves outside the directory being scanned,
+        and reading (and therefore hashing) it would leak information
+        about a file this scan wasn't asked to touch. Identity fields are
+        empty, the same shape used for a file that couldn't be read at
+        all (BEE-IO-001), rather than a guess."""
+        return cls(
+            path=str(path),
+            size=0,
+            sha256="",
+            sha512="",
+            declared_format=declared_format_from_extension(path),
+            detected_format="unknown",
+            format_confidence=Confidence.UNKNOWN,
+            magic_bytes_hex="",
+            is_symlink=True,
+            symlink_target=symlink_target,
+        )

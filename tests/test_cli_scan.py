@@ -217,3 +217,74 @@ def test_scan_symlink_escaping_root_is_flagged(tmp_path, monkeypatch):
     artifact = payload["artifacts"][0]
     assert artifact["is_symlink"] is True
     assert artifact["symlink_target"] == str(outside.resolve())
+    # The whole point of the fix: content is never read for an escaping
+    # symlink by default, so there is nothing to hash.
+    assert artifact["sha256"] == ""
+    assert artifact["sha512"] == ""
+    assert artifact["detected_format"] == "unknown"
+
+
+def test_scan_does_not_leak_escaping_symlink_target_content(tmp_path, monkeypatch):
+    # The regression this guards against: an escaping symlink's target
+    # used to be hashed *before* the escape was flagged, so its SHA-256
+    # ended up in the run output (and the database) regardless — enough to
+    # confirm a suspected file's contents from a directory an attacker
+    # controls, even without exposing the file itself.
+    import hashlib
+
+    monkeypatch.chdir(tmp_path)
+    secret = tmp_path / "secret.txt"
+    secret.write_bytes(b"sensitive-secret-content")
+    real_hash = hashlib.sha256(secret.read_bytes()).hexdigest()
+
+    target = tmp_path / "models"
+    target.mkdir()
+    (target / "link.gguf").symlink_to(secret)
+
+    result = runner.invoke(app, ["--format", "json", "scan", str(target)])
+
+    assert result.exit_code == 0
+    assert real_hash not in result.output
+    payload = json.loads(result.output)
+    assert payload["artifacts"][0]["sha256"] == ""
+
+
+def test_scan_follow_symlinks_opts_into_reading_escaping_target(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    outside = tmp_path / "outside.gguf"
+    builders.write_gguf(outside)
+    target = tmp_path / "models"
+    target.mkdir()
+    (target / "link.gguf").symlink_to(outside)
+
+    result = runner.invoke(app, ["--format", "json", "scan", str(target), "--follow-symlinks"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    artifact = payload["artifacts"][0]
+    assert artifact["sha256"] != ""
+    assert artifact["detected_format"] == "gguf"
+    finding_ids = [f["id"] for f in payload["findings"]]
+    assert "BEE-SYM-001" in finding_ids  # still flagged, even though followed
+
+
+def test_scan_still_reads_symlink_content_when_target_is_inside_root(tmp_path, monkeypatch):
+    # Only *escaping* symlinks skip hashing by default -- a symlink whose
+    # target is inside the scanned directory is normal filesystem
+    # structure, not a host-escape risk, and must keep working as before.
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / "models"
+    target.mkdir()
+    real = target / "real.gguf"
+    builders.write_gguf(real)
+    (target / "link.gguf").symlink_to(real)
+
+    result = runner.invoke(app, ["--format", "json", "scan", str(target)])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    link_artifact = next(a for a in payload["artifacts"] if a["path"].endswith("link.gguf"))
+    assert link_artifact["sha256"] != ""
+    assert link_artifact["detected_format"] == "gguf"
+    finding_ids = [f["id"] for f in payload["findings"]]
+    assert "BEE-SYM-001" not in finding_ids

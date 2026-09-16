@@ -86,7 +86,8 @@ else is reported as `unknown` rather than guessed.
 
 `bee scan` also flags:
 - symlinks whose target resolves outside the scanned directory
-  (`BEE-SYM-001`)
+  (`BEE-SYM-001`) — the target is never opened (so never hashed) unless
+  you pass `--follow-symlinks`
 - files it couldn't read, without aborting the rest of the scan
   (`BEE-IO-001`)
 

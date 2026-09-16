@@ -10,7 +10,7 @@ from bee.core.artifact import Artifact
 from bee.core.run import Run
 from bee.evidence.finding import Confidence, Evidence, Finding, Severity
 from bee.evidence.mismatch import check_mismatch
-from bee.evidence.symlink import check_symlink_escape
+from bee.evidence.symlink import build_symlink_escape_finding, is_escaping_symlink
 from bee.reports.json import render_run_json
 from bee.reports.terminal import render_run
 from bee.storage.db import save_run
@@ -60,6 +60,13 @@ def scan_command(
         help="Use a stable run id and timestamp so identical input produces "
         "byte-identical output, for diffing against a baseline.",
     ),
+    follow_symlinks: bool = typer.Option(
+        False,
+        "--follow-symlinks",
+        help="Read (and hash) a symlink's target even when it resolves "
+        "outside the scan root. BEE-SYM-001 is still recorded either way. "
+        "Off by default: a symlink escaping the scan root is not opened at all.",
+    ),
 ) -> None:
     """Scan a local file or directory and report artifact identity, format, and findings."""
     state = ctx.obj
@@ -70,6 +77,23 @@ def scan_command(
     artifacts: list[Artifact] = []
     findings: list[Finding] = []
     for file_path in files:
+        # Decide before hashing: a symlink whose target resolves outside
+        # the scan root is flagged without ever being opened, unless the
+        # operator explicitly opts in with --follow-symlinks. Checking
+        # this after computing an Artifact (and therefore its hash) would
+        # mean the hash-harvesting the finding warns about had already
+        # happened by the time the warning fires.
+        escaping_target = is_escaping_symlink(file_path, scan_root)
+        if escaping_target is not None:
+            findings.append(
+                build_symlink_escape_finding(
+                    str(file_path), escaping_target, content_read=follow_symlinks
+                )
+            )
+            if not follow_symlinks:
+                artifacts.append(Artifact.unresolved_symlink(file_path, escaping_target))
+                continue
+
         try:
             artifact = Artifact.from_file(file_path)
         except OSError as exc:
@@ -98,9 +122,6 @@ def scan_command(
         finding = check_mismatch(artifact)
         if finding is not None:
             findings.append(finding)
-        symlink_finding = check_symlink_escape(artifact, scan_root)
-        if symlink_finding is not None:
-            findings.append(symlink_finding)
 
     run = Run.from_scan(
         target_path=str(path), artifacts=artifacts, findings=findings, deterministic=deterministic

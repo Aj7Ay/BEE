@@ -65,3 +65,17 @@ def test_artifact_from_file_records_symlink_target(tmp_path):
     assert artifact.symlink_target == str(real.resolve())
     # Identity is still computed from the target's actual content.
     assert artifact.detected_format == "gguf"
+
+
+def test_unresolved_symlink_has_no_hash_or_content(tmp_path):
+    link = tmp_path / "link.gguf"
+    link.symlink_to(tmp_path / "somewhere_never_opened.gguf")
+
+    artifact = Artifact.unresolved_symlink(link, "/outside/somewhere_never_opened.gguf")
+
+    assert artifact.is_symlink is True
+    assert artifact.symlink_target == "/outside/somewhere_never_opened.gguf"
+    assert artifact.sha256 == ""
+    assert artifact.sha512 == ""
+    assert artifact.detected_format == "unknown"
+    assert artifact.format_confidence == Confidence.UNKNOWN
