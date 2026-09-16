@@ -45,7 +45,15 @@ class Artifact(BaseModel):
         sha256, sha512 = compute_file_hashes(path)
         declared_format = declared_format_from_extension(path)
         detected_format, format_confidence, _evidence = detect_format(path)
-        magic_bytes_hex = read_magic_bytes_hex(path)
+        # Only recorded when a detector actually matched: for a known
+        # format these bytes are the magic number/header, which is the
+        # evidence this field exists for. For "unknown" they're just the
+        # first 16 bytes of whatever the file happens to contain -- and
+        # BEE scans directories that can hold more than model weights
+        # (a stray .env, a token file, a config). Recording them
+        # unconditionally meant that content ended up in terminal output,
+        # JSON, and the run database regardless of relevance.
+        magic_bytes_hex = read_magic_bytes_hex(path) if detected_format != "unknown" else ""
         is_symlink = path.is_symlink()
         # resolve(strict=False) so a broken symlink still records where it
         # points, instead of raising.

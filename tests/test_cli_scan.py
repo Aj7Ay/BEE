@@ -288,3 +288,28 @@ def test_scan_still_reads_symlink_content_when_target_is_inside_root(tmp_path, m
     assert link_artifact["detected_format"] == "gguf"
     finding_ids = [f["id"] for f in payload["findings"]]
     assert "BEE-SYM-001" not in finding_ids
+
+
+def test_scan_does_not_leak_unclassified_file_content_anywhere(tmp_path, monkeypatch):
+    # The redaction test suggested directly: plant a canary in a
+    # non-model file inside the scan directory and confirm it appears in
+    # neither the CLI output nor the persisted run database.
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / "models"
+    target.mkdir()
+    canary = b"CANARY_SECRET_DO_NOT_LEAK_0123456789"
+    (target / ".env").write_bytes(canary)
+    builders.write_gguf(target / "model.gguf")
+    canary_hex_prefix = canary[:16].hex()
+
+    result = runner.invoke(app, ["--format", "json", "scan", str(target)])
+
+    assert result.exit_code == 0
+    assert canary_hex_prefix not in result.output
+    payload = json.loads(result.output)
+    env_artifact = next(a for a in payload["artifacts"] if a["path"].endswith(".env"))
+    assert env_artifact["detected_format"] == "unknown"
+    assert env_artifact["magic_bytes_hex"] == ""
+
+    db_path = tmp_path / ".bee" / "bee.db"
+    assert canary_hex_prefix not in db_path.read_bytes().decode("utf-8", errors="ignore")

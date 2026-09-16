@@ -67,6 +67,20 @@ def test_artifact_from_file_records_symlink_target(tmp_path):
     assert artifact.detected_format == "gguf"
 
 
+def test_artifact_from_file_unknown_format_has_no_magic_bytes(tmp_path):
+    # Regression test: magic_bytes_hex used to record the first 16 raw
+    # bytes of every scanned file unconditionally -- for anything BEE
+    # couldn't classify (a .env, a token file, a README) those bytes are
+    # just content, not evidence, and shouldn't be recorded at all.
+    path = tmp_path / "secrets.env"
+    path.write_bytes(b"AWS_SECRET_ACCESS_KEY=fake-not-a-real-key-0123456789")
+
+    artifact = Artifact.from_file(path)
+
+    assert artifact.detected_format == "unknown"
+    assert artifact.magic_bytes_hex == ""
+
+
 def test_unresolved_symlink_has_no_hash_or_content(tmp_path):
     link = tmp_path / "link.gguf"
     link.symlink_to(tmp_path / "somewhere_never_opened.gguf")

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import typer
 
+from bee.cli.severity import FAIL_ON_HELP, exit_if_threshold_met, parse_severity_option
 from bee.cli.state import OutputFormat
 from bee.core.artifact import Artifact
 from bee.core.run import Run
@@ -14,10 +15,6 @@ from bee.evidence.symlink import build_symlink_escape_finding, is_escaping_symli
 from bee.reports.json import render_run_json
 from bee.reports.terminal import render_run
 from bee.storage.db import save_run
-
-# Severity, most severe first — matches declaration order in Severity itself,
-# spelled out here so "meets or exceeds" (--fail-on) reads as "rank <= threshold".
-_SEVERITY_ORDER = list(Severity)
 
 
 def _iter_files(target: Path, workspace_dir: Path) -> list[Path]:
@@ -37,23 +34,10 @@ def _iter_files(target: Path, workspace_dir: Path) -> list[Path]:
     return sorted(results)
 
 
-def _parse_severity(value: str) -> Severity:
-    try:
-        return Severity(value.lower())
-    except ValueError as exc:
-        valid = ", ".join(s.value for s in Severity)
-        raise typer.BadParameter(f"must be one of: {valid}") from exc
-
-
 def scan_command(
     ctx: typer.Context,
     path: Path = typer.Argument(..., exists=True, help="File or directory to scan."),
-    fail_on: str | None = typer.Option(
-        None,
-        "--fail-on",
-        help="Exit non-zero if any finding's severity meets or exceeds this "
-        "level (critical, high, medium, low, info).",
-    ),
+    fail_on: str | None = typer.Option(None, "--fail-on", help=FAIL_ON_HELP),
     deterministic: bool = typer.Option(
         False,
         "--deterministic",
@@ -70,7 +54,7 @@ def scan_command(
 ) -> None:
     """Scan a local file or directory and report artifact identity, format, and findings."""
     state = ctx.obj
-    threshold = _parse_severity(fail_on) if fail_on is not None else None
+    threshold = parse_severity_option(fail_on) if fail_on is not None else None
     scan_root = path if path.is_dir() else path.parent
     files = _iter_files(path, workspace_dir=state.db_path.parent)
 
@@ -141,7 +125,4 @@ def scan_command(
     except (sqlite3.Error, OSError) as exc:
         typer.echo(f"Warning: could not save run to {state.db_path}: {exc}", err=True)
 
-    if threshold is not None:
-        threshold_rank = _SEVERITY_ORDER.index(threshold)
-        if any(_SEVERITY_ORDER.index(f.severity) <= threshold_rank for f in run.findings):
-            raise typer.Exit(code=1)
+    exit_if_threshold_met(run.findings, threshold)

@@ -47,7 +47,9 @@ bee inspect ./models/model.safetensors
 bee --format json scan ./models
 
 # Fail the build if anything at or above a severity is found
+# --fail-on works identically on both scan and inspect
 bee scan ./models --fail-on high
+bee inspect ./model.safetensors --fail-on critical
 
 # Reproducible output: identical input -> byte-identical JSON
 bee --format json scan ./models --deterministic
@@ -92,6 +94,13 @@ else is reported as `unknown` rather than guessed.
   it while walking a directory
 - files it couldn't read, without aborting the rest of the scan
   (`BEE-IO-001`)
+
+The magic-bytes field shown by `inspect` (and stored per-artifact by
+`scan`) is only ever populated when a detector actually matched a known
+format — it's evidence for that match, not a general content preview.
+For anything reported as `unknown`, it's left empty rather than exposing
+16 raw bytes of a file BEE couldn't classify (a stray `.env`, a token
+file, a README living in the same directory as real model weights).
 
 ## Development
 

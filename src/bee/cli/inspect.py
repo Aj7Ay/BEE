@@ -5,6 +5,7 @@ from pathlib import Path
 
 import typer
 
+from bee.cli.severity import FAIL_ON_HELP, exit_if_threshold_met, parse_severity_option
 from bee.cli.state import OutputFormat
 from bee.core.artifact import Artifact
 from bee.evidence.finding import Finding
@@ -17,6 +18,7 @@ def inspect_command(
     path: Path = typer.Argument(
         ..., exists=True, file_okay=True, dir_okay=False, help="File to inspect."
     ),
+    fail_on: str | None = typer.Option(None, "--fail-on", help=FAIL_ON_HELP),
     follow_symlinks: bool = typer.Option(
         False,
         "--follow-symlinks",
@@ -28,6 +30,7 @@ def inspect_command(
 ) -> None:
     """Show a detailed identity and format report for a single artifact."""
     state = ctx.obj
+    threshold = parse_severity_option(fail_on) if fail_on is not None else None
     findings: list[Finding] = []
 
     # Same decision as `bee scan`, made the same way: from the raw path,
@@ -43,6 +46,7 @@ def inspect_command(
         if not follow_symlinks:
             artifact = Artifact.unresolved_symlink(path, escaping_target)
             _print_inspection(state, artifact, findings)
+            exit_if_threshold_met(findings, threshold)
             return
 
     try:
@@ -56,6 +60,7 @@ def inspect_command(
         findings.append(mismatch)
 
     _print_inspection(state, artifact, findings)
+    exit_if_threshold_met(findings, threshold)
 
 
 def _print_inspection(state, artifact: Artifact, findings: list[Finding]) -> None:

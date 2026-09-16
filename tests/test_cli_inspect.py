@@ -122,3 +122,74 @@ def test_inspect_still_reads_symlink_inside_its_own_directory(tmp_path, monkeypa
     assert payload["artifact"]["sha256"] != ""
     assert payload["artifact"]["detected_format"] == "gguf"
     assert payload["findings"] == []
+
+
+def test_inspect_text_output_shows_multiple_findings_at_once(tmp_path, monkeypatch):
+    # A followed escaping symlink can trip both BEE-SYM-001 and
+    # BEE-FMT-001 simultaneously; the text renderer must show both, not
+    # just the first (a real bug the list-of-findings refactor fixed).
+    import pickle
+
+    monkeypatch.chdir(tmp_path)
+    outside = tmp_path / "evil.safetensors"
+    outside.write_bytes(pickle.dumps({"x": 1}, protocol=4))
+    sym_dir = tmp_path / "both"
+    sym_dir.mkdir()
+    link = sym_dir / "link.safetensors"
+    link.symlink_to(outside)
+
+    result = runner.invoke(app, ["inspect", str(link), "--follow-symlinks"])
+
+    assert result.exit_code == 0
+    assert result.output.count("Finding:") == 2
+    assert "BEE-SYM-001" in result.output
+    assert "BEE-FMT-001" in result.output
+
+
+def test_inspect_does_not_leak_unclassified_file_content(tmp_path, monkeypatch):
+    # Regression test: magic_bytes_hex used to record the first 16 bytes
+    # of any file regardless of whether a detector matched.
+    monkeypatch.chdir(tmp_path)
+    file_path = tmp_path / "secrets.env"
+    canary = b"AWS_SECRET_ACCESS_KEY=fake-canary-value"
+    file_path.write_bytes(canary)
+    canary_hex_prefix = canary[:16].hex()
+
+    result = runner.invoke(app, ["--format", "json", "inspect", str(file_path)])
+
+    assert result.exit_code == 0
+    assert canary_hex_prefix not in result.output
+    payload = json.loads(result.output)
+    assert payload["artifact"]["detected_format"] == "unknown"
+    assert payload["artifact"]["magic_bytes_hex"] == ""
+
+
+def test_inspect_fail_on_exits_nonzero_when_threshold_met(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    file_path = tmp_path / "weights.pt"
+    builders.write_safetensors(file_path)  # -> BEE-FMT-001, low severity
+
+    result = runner.invoke(app, ["inspect", str(file_path), "--fail-on", "low"])
+
+    assert result.exit_code == 1
+
+
+def test_inspect_fail_on_exits_zero_when_threshold_not_met(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    file_path = tmp_path / "model.gguf"
+    builders.write_gguf(file_path)  # no findings at all
+
+    result = runner.invoke(app, ["inspect", str(file_path), "--fail-on", "info"])
+
+    assert result.exit_code == 0
+
+
+def test_inspect_fail_on_rejects_invalid_severity(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    file_path = tmp_path / "model.gguf"
+    builders.write_gguf(file_path)
+
+    result = runner.invoke(app, ["inspect", str(file_path), "--fail-on", "extreme"])
+
+    assert result.exit_code != 0
+    assert "must be one of" in result.output
