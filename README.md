@@ -1,9 +1,14 @@
 # BEE
 ![BEE](banner-bee.png)
 
+**B**inary, **E**vidence & **E**valuation.
+
 BEE is a CLI for vetting AI/ML model artifacts before they enter your
-environment. It establishes an artifact's identity, detects its real
-structural format (never trusting the file extension), and flags
+environment: it examines the **binary** artifact itself, gathers
+**evidence** about what it actually is, and produces an **evaluation** —
+a concrete, explained finding rather than a bare pass/fail label. Today
+that means establishing an artifact's identity, detecting its real
+structural format (never trusting the file extension), and flagging
 mismatches between the two.
 
 This is early. Static security analysis beyond format-mismatch detection
