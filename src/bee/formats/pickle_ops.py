@@ -28,11 +28,27 @@ _STRING_PUSH_OPS = frozenset({
     "SHORT_BINSTRING", "BINSTRING", "STRING",
 })
 
-# MEMOIZE (protocol 4+) records a reference to the current stack top for
-# later BINGET/LONG_BINGET use -- it doesn't push or pop anything itself,
-# so it must not break the (string, string, STACK_GLOBAL) sequence this
-# module is watching for.
-_STACK_NEUTRAL_OPS = frozenset({"MEMOIZE"})
+# Opcodes that record the current stack-top value into the memo table for
+# later recall, and the ones that recall it. MEMOIZE (protocol 4+) uses an
+# implicit index (the memo table's current size, exactly as CPython's own
+# unpickler assigns it); PUT/BINPUT/LONG_BINPUT (older, but not actually
+# barred from appearing in any stream -- pickle's VM doesn't enforce
+# protocol consistency, only a real pickler does) carry an explicit index.
+# GET/BINGET/LONG_BINGET recall by that same index.
+#
+# This module tracks memo indirection specifically because a hand-crafted
+# pickle (not one written by CPython's own pickler) can route a
+# STACK_GLOBAL's module/qualname strings through the memo instead of
+# pushing them immediately beforehand -- MEMOIZE the module string,
+# MEMOIZE the qualname string, do something else, then BINGET each one
+# right before STACK_GLOBAL. That's a real, verified evasion: a pickle
+# built this way loads and executes exactly like one that doesn't, and an
+# implementation that only watches for immediately-preceding string
+# pushes reports it as an unresolved reference instead of the dangerous
+# primitive it actually calls.
+_MEMO_STORE_OPS_IMPLICIT = frozenset({"MEMOIZE"})
+_MEMO_STORE_OPS_EXPLICIT = frozenset({"PUT", "BINPUT", "LONG_BINPUT"})
+_MEMO_RECALL_OPS = frozenset({"GET", "BINGET", "LONG_BINGET"})
 
 UNRESOLVED_STACK_GLOBAL = "<unresolved_stack_global>"
 
@@ -49,22 +65,32 @@ def _analyze_stream(stream: IO[bytes]) -> PickleAnalysis | None:
     found_stop = False
     globals_seen: list[str] = []
     reduce_count = 0
-    # Best-effort tracking of the last two pushed string literals, to
-    # resolve STACK_GLOBAL's (module, qualname) pair. This is not a full
-    # stack simulation -- it doesn't need to be: CPython's own pickler
-    # always writes a GLOBAL/STACK_GLOBAL reference as two consecutive
-    # string-push opcodes (optionally MEMOIZE'd) immediately followed by
-    # STACK_GLOBAL, because that's the only sequence the pickle VM accepts
-    # for it. Any other opcode appearing in between means whatever was
-    # being tracked is stale, so it's dropped rather than risk attributing
-    # the wrong pair to a later STACK_GLOBAL.
+    # Tracks the last two string-valued items placed on top of the
+    # interpreter stack -- whether pushed directly (a string-push opcode)
+    # or recalled from the memo (BINGET et al.) -- to resolve
+    # STACK_GLOBAL's (module, qualname) pair. Not a full stack simulation:
+    # any opcode this module doesn't specifically recognize as producing
+    # or recalling a string clears it, so a stale pair is never attributed
+    # to a later STACK_GLOBAL.
     pending_strings: list[str] = []
+    # The memo table, keyed by index. Only string values are ever stored
+    # (a memoized non-string is recorded as None, still occupying its
+    # slot so implicit MEMOIZE indices -- which are just the table's
+    # current size -- stay correctly aligned with what a real unpickler
+    # would assign).
+    memo: dict[int, str | None] = {}
+    # The string most recently placed on top of the stack by an opcode
+    # this module tracks, valid only until the next opcode -- what a
+    # MEMOIZE occurring right now would be recording.
+    stack_top_string: str | None = None
 
     try:
         for i, (opcode, arg, _pos) in enumerate(pickletools.genops(stream)):
             if i >= MAX_PICKLE_OPCODES:
                 break
             name = opcode.name
+            next_stack_top_string: str | None = None  # what this opcode leaves on top, if a tracked string
+
             if name == "PROTO":
                 protocol = arg
             elif name == "GLOBAL":
@@ -85,8 +111,28 @@ def _analyze_stream(stream: IO[bytes]) -> PickleAnalysis | None:
             elif name in _STRING_PUSH_OPS and isinstance(arg, str):
                 pending_strings.append(arg)
                 del pending_strings[:-2]
-            elif name not in _STACK_NEUTRAL_OPS:
+                next_stack_top_string = arg
+            elif name in _MEMO_STORE_OPS_IMPLICIT:
+                # Stack-neutral: MEMOIZE records the current top without
+                # popping it, so both the memo write and the tracking
+                # below use stack_top_string as it already stood.
+                memo[len(memo)] = stack_top_string
+                next_stack_top_string = stack_top_string
+            elif name in _MEMO_STORE_OPS_EXPLICIT and isinstance(arg, int):
+                memo[arg] = stack_top_string
+                next_stack_top_string = stack_top_string
+            elif name in _MEMO_RECALL_OPS and isinstance(arg, int):
+                recalled = memo.get(arg)
+                if recalled is not None:
+                    pending_strings.append(recalled)
+                    del pending_strings[:-2]
+                    next_stack_top_string = recalled
+                else:
+                    pending_strings.clear()
+            else:
                 pending_strings.clear()
+
+            stack_top_string = next_stack_top_string
 
             if name == "STOP":
                 found_stop = True

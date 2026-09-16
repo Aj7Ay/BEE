@@ -156,10 +156,16 @@ def check_pickle_calls(artifact: Artifact) -> Finding | None:
         return None
 
     risky = [g for g in unrecognized if _module_of(g) in _RISKY_MODULES]
-    # An unresolved STACK_GLOBAL target is inherently uncertain -- not
-    # knowing what it points to is itself a reason not to wave it through
-    # at the lowest tier, the same way a risky-module reference isn't.
-    if risky or unresolved_count:
+    # An unresolved STACK_GLOBAL target that is then actually invoked
+    # (REDUCE fires) is worse than one merely referenced: a memo-tracking
+    # gap or some other opcode sequence this module doesn't model made
+    # its target unrecoverable, and it's being called anyway. That's
+    # treated with more suspicion than a resolved-but-unlisted risky-
+    # module reference, not less.
+    if unresolved_count and analysis.reduce_count:
+        severity = Severity.HIGH
+        title = "Pickle calls an unresolved global reference"
+    elif risky or unresolved_count:
         severity = Severity.MEDIUM
         title = "Pickle references an unrecognized global in a sensitive module"
     else:

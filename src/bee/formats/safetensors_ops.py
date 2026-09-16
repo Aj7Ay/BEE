@@ -54,7 +54,12 @@ def analyze_safetensors(path: Path) -> SafetensorsAnalysis | None:
         return None
     try:
         header = json.loads(header_bytes)
-    except (json.JSONDecodeError, UnicodeDecodeError):
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        # ValueError (beyond JSONDecodeError) also covers CPython's
+        # int-string-conversion digit limit: a header containing an
+        # absurdly long integer literal (a bignum-DoS attempt via a
+        # shape dimension, say) raises plain ValueError out of the
+        # json module's own int parsing, not JSONDecodeError.
         return None
     if not isinstance(header, dict):
         return None

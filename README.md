@@ -88,7 +88,11 @@ A pickle-based file can be exactly what it claims to be — no format
 mismatch, correctly named `.pt` — and still execute arbitrary code the
 moment it's loaded. BEE reads the actual opcode stream (for both raw
 pickle files and PyTorch's zip-wrapped checkpoints) and reports what it
-references:
+references — including resolving a target reached through memo
+indirection (`MEMOIZE`/`PUT` + `GET`/`BINGET`) rather than only one
+pushed immediately before the reference, which a hand-crafted (not
+`pickle.dumps()`-produced) payload can use to reach the same call while
+evading a naive "last two strings" tracker:
 
 - **`BEE-PKL-001` (critical)** — references a known code-execution or
   destructive primitive (`os.system`, `subprocess.Popen`, `eval`,
@@ -145,6 +149,14 @@ shape/dtype that's supposed to back it:
 - a range that runs past the end of the file
 - two tensors claiming overlapping bytes
 - a declared shape × dtype that doesn't match the byte range claimed for it
+- an implausible tensor count or element count, bounded rather than
+  computed exactly — an attacker-controlled header shouldn't be able to
+  turn "check the bounds" into its own CPU/memory exhaustion attack
+
+`BEE-STS-002` (low) separately flags bytes in the data region that no
+tensor's range covers at all — every real file checked scans with zero
+such gap, so any gap is worth a look, not something a naive loader would
+ever see since it only reads what a tensor points at.
 
 ```
 $ bee inspect attacked.safetensors --fail-on high
