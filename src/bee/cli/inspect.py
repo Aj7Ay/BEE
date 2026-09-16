@@ -11,6 +11,7 @@ from bee.core.artifact import Artifact
 from bee.evidence.finding import Finding
 from bee.evidence.mismatch import check_mismatch
 from bee.evidence.pickle_calls import check_pickle_calls
+from bee.evidence.safetensors_bounds import check_safetensors_bounds
 from bee.evidence.symlink import build_symlink_escape_finding, is_escaping_symlink
 
 
@@ -62,6 +63,9 @@ def inspect_command(
     pickle_finding = check_pickle_calls(artifact)
     if pickle_finding is not None:
         findings.append(pickle_finding)
+    bounds_finding = check_safetensors_bounds(artifact)
+    if bounds_finding is not None:
+        findings.append(bounds_finding)
 
     _print_inspection(state, artifact, findings)
     exit_if_threshold_met(findings, threshold)

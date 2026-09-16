@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import json
 import struct
 import zipfile
 from pathlib import Path
 
 from bee.evidence.finding import Confidence, Evidence
 from bee.formats.pickle_ops import analyze_pickle_file
+from bee.formats.safetensors_ops import analyze_safetensors
 
 DetectionResult = tuple[str, Confidence, list[Evidence]]
 
@@ -19,23 +19,10 @@ def _read_prefix(path: Path, size: int = _PREFIX_READ_SIZE) -> bytes:
 
 
 def detect_safetensors(path: Path) -> DetectionResult | None:
-    try:
-        with path.open("rb") as f:
-            header_len_bytes = f.read(8)
-            if len(header_len_bytes) < 8:
-                return None
-            (header_len,) = struct.unpack("<Q", header_len_bytes)
-            file_size = path.stat().st_size
-            if header_len <= 0 or header_len > file_size - 8:
-                return None
-            header_bytes = f.read(header_len)
-    except OSError:
-        return None
-    try:
-        header = json.loads(header_bytes)
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return None
-    if not isinstance(header, dict):
+    # Shared with the bounds-checking finding (bee.evidence.safetensors_bounds)
+    # -- one header-parsing implementation, not a second copy that could
+    # drift from it.
+    if analyze_safetensors(path) is None:
         return None
     return (
         "safetensors",

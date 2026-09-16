@@ -12,6 +12,7 @@ from bee.core.run import Run
 from bee.evidence.finding import Confidence, Evidence, Finding, Severity
 from bee.evidence.mismatch import check_mismatch
 from bee.evidence.pickle_calls import check_pickle_calls
+from bee.evidence.safetensors_bounds import check_safetensors_bounds
 from bee.evidence.symlink import build_symlink_escape_finding, is_escaping_symlink
 from bee.reports.json import render_run_json
 from bee.reports.terminal import render_run
@@ -110,6 +111,9 @@ def scan_command(
         pickle_finding = check_pickle_calls(artifact)
         if pickle_finding is not None:
             findings.append(pickle_finding)
+        bounds_finding = check_safetensors_bounds(artifact)
+        if bounds_finding is not None:
+            findings.append(bounds_finding)
 
     run = Run.from_scan(
         target_path=str(path), artifacts=artifacts, findings=findings, deterministic=deterministic

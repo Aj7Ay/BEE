@@ -11,10 +11,11 @@ that means establishing an artifact's identity, detecting its real
 structural format (never trusting the file extension), and flagging
 mismatches between the two.
 
-This is early. Beyond format-mismatch detection and pickle call-graph
-analysis (below), deeper static security analysis (SafeTensors bounds
-checks, GGUF metadata inspection, and more), provenance, supply-chain
-checks, licensing, and policy enforcement are planned in later releases.
+This is early. Beyond what's below (format-mismatch detection, pickle
+call-graph analysis, SafeTensors bounds checking), deeper static
+security analysis (GGUF metadata inspection and more), provenance,
+supply-chain checks, licensing, and policy enforcement are planned in
+later releases.
 
 ## Install
 
@@ -125,6 +126,36 @@ Both files here are honestly named, correctly formatted PyTorch
 checkpoints — no `BEE-FMT-001` involved. `legit_looking.pt` is flagged
 because its embedded pickle references `posix.system` (how `os.system`
 resolves internally) and calls it via `REDUCE` on load.
+
+The allowlist behind the LOW/MEDIUM split is calibrated against a real
+corpus, not guessed: 10 checkpoints downloaded from Hugging Face across
+GPT-2, BERT, T5, GPT-Neo, ViT, DistilBERT, RoBERTa, and CLIP. Before
+calibration, 9 of the 10 tripped `BEE-PKL-002` on legacy
+`torch.*Storage` classes referenced by PyTorch's own save format — real
+noise, not a real finding. After, all 10 scan clean.
+
+## SafeTensors bounds checking
+
+SafeTensors' container format can be well-formed — a valid length
+prefix, valid JSON — while its header still lies about where a tensor's
+bytes actually live. `BEE-STS-001` (high) checks every declared
+`data_offsets` range against the file, the other tensors, and the
+shape/dtype that's supposed to back it:
+
+- a range that runs past the end of the file
+- two tensors claiming overlapping bytes
+- a declared shape × dtype that doesn't match the byte range claimed for it
+
+```
+$ bee inspect attacked.safetensors --fail-on high
+Detected format:  safetensors (supported)
+Finding:          BEE-STS-001 [high] SafeTensors header declares invalid or overlapping tensor ranges
+```
+
+(`attacked.safetensors` here is a real, otherwise-valid GPT-2 checkpoint
+with one tensor's `data_offsets` end pushed 10MB past the actual file —
+the header still parses as valid JSON, so format detection alone would
+call this a clean safetensors file.)
 
 ## What BEE detects today
 

@@ -238,3 +238,20 @@ def test_check_pickle_calls_flags_dangerous_global_in_pytorch_zip(tmp_path):
     assert finding is not None
     assert finding.id == "BEE-PKL-001"
     assert finding.severity.value == "critical"
+
+
+def test_allowed_globals_covers_the_calibrated_real_checkpoint_corpus():
+    # Calibrated against 10 real checkpoints downloaded from Hugging Face
+    # (hf-internal-testing/tiny-random-{gpt2,bert,BertModel,t5,gpt_neo,
+    # ViTModel,distilbert,roberta}, sshleifer/tiny-gpt2, and the CLIP
+    # zero-shot-image-classification tiny model) -- these are the exact
+    # unrecognized globals that appeared across 9 of the 10 before this
+    # calibration, all legacy per-dtype storage classes PyTorch's own
+    # pickle save format references via _rebuild_tensor_v2.
+    from bee.evidence.pickle_calls import ALLOWED_GLOBALS
+
+    observed_in_real_corpus = {
+        "torch.FloatStorage", "torch.LongStorage", "torch.ByteStorage",
+        "torch._utils._rebuild_tensor_v2", "collections.OrderedDict",
+    }
+    assert observed_in_real_corpus <= ALLOWED_GLOBALS
