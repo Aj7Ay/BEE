@@ -34,7 +34,9 @@ def test_artifact_from_file_safetensors(tmp_path):
     assert artifact.declared_format == "pytorch"
     assert artifact.detected_format == "safetensors"
     assert artifact.format_confidence == Confidence.SUPPORTED
-    assert len(artifact.magic_bytes_hex) > 0
+    # safetensors' evidence is header validity, not a fixed magic-byte
+    # sequence -- nothing to derive magic_bytes_hex from.
+    assert artifact.magic_bytes_hex == ""
 
 
 def test_artifact_from_file_matching_formats(tmp_path):
@@ -43,6 +45,35 @@ def test_artifact_from_file_matching_formats(tmp_path):
     artifact = Artifact.from_file(path)
     assert artifact.declared_format == "gguf"
     assert artifact.detected_format == "gguf"
+    # Exactly the 4-byte GGUF magic -- not a blanket 16-byte read that
+    # happens to include it plus 12 unrelated bytes.
+    assert artifact.magic_bytes_hex == "47475546"
+
+
+def test_artifact_from_file_tar_does_not_leak_member_filename(tmp_path):
+    # Regression test: tar's actual magic ("ustar") lives at offset 257,
+    # not 0. A blind fixed-offset-0 read recorded the first archive
+    # member's filename instead -- a real secret if that member happened
+    # to be named something like "prod-signing-key.pem".
+    path = tmp_path / "model.tar"
+    builders.write_tar(path)
+
+    artifact = Artifact.from_file(path)
+
+    assert artifact.detected_format == "archive"
+    assert artifact.magic_bytes_hex == ""
+
+
+def test_artifact_from_file_pickle_has_no_magic_bytes(tmp_path):
+    # pickle's evidence is its protocol number, not a fixed byte sequence
+    # (protocols 0/1 have no header at all) -- nothing to show here.
+    path = tmp_path / "model.pkl"
+    builders.write_pickle(path)
+
+    artifact = Artifact.from_file(path)
+
+    assert artifact.detected_format == "pickle"
+    assert artifact.magic_bytes_hex == ""
 
 
 def test_artifact_from_file_regular_file_is_not_a_symlink(tmp_path):

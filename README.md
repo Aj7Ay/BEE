@@ -47,16 +47,18 @@ bee inspect ./models/model.safetensors
 bee --format json scan ./models
 
 # Fail the build if anything at or above a severity is found
-# --fail-on works identically on both scan and inspect
+# --fail-on works identically on scan, inspect, and show
 bee scan ./models --fail-on high
 bee inspect ./model.safetensors --fail-on critical
 
 # Reproducible output: identical input -> byte-identical JSON
 bee --format json scan ./models --deterministic
 
-# Past runs, and re-displaying one by id
+# Past runs, and re-displaying one by id -- e.g. re-checking a stored
+# run in CI without re-scanning
 bee history
 bee show <run-id>
+bee show <run-id> --fail-on critical
 ```
 
 ### Example
@@ -96,11 +98,14 @@ else is reported as `unknown` rather than guessed.
   (`BEE-IO-001`)
 
 The magic-bytes field shown by `inspect` (and stored per-artifact by
-`scan`) is only ever populated when a detector actually matched a known
-format — it's evidence for that match, not a general content preview.
-For anything reported as `unknown`, it's left empty rather than exposing
-16 raw bytes of a file BEE couldn't classify (a stray `.env`, a token
-file, a README living in the same directory as real model weights).
+`scan`) records exactly the bytes a detector matched on — nothing more.
+For a format whose signature is a real fixed byte sequence (GGUF, NumPy,
+HDF5, a zip/gzip magic), that's the signature itself, at whatever offset
+it actually lives at. For anything else — `unknown`, but also
+safetensors, pickle, PyTorch, tar, ONNX, whose evidence is descriptive
+rather than a raw byte match — it's left empty, never a blind fixed-size
+read from the start of the file that could just as easily land on
+someone's `.env` contents or an archive member's filename.
 
 ## Development
 

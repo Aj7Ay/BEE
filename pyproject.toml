@@ -1,6 +1,6 @@
 [project]
 name = "bee-guard"
-version = "0.2.3"
+version = "0.2.4"
 description = "AI/ML model supply-chain security and provenance vetting CLI"
 readme = "README.md"
 license = "Apache-2.0"

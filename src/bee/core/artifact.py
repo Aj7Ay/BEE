@@ -5,7 +5,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from bee.evidence.finding import Confidence
+from bee.evidence.finding import Confidence, Evidence
 from bee.formats.detector import declared_format_from_extension, detect_format
 
 _HASH_CHUNK_SIZE = 1_048_576
@@ -27,6 +27,25 @@ def read_magic_bytes_hex(path: Path, length: int = _MAGIC_BYTES_LENGTH) -> str:
         return f.read(length).hex()
 
 
+def _magic_bytes_from_evidence(evidence: list[Evidence]) -> str:
+    """The exact bytes a detector matched on, and only those -- not a
+    blind fixed-size read from offset 0. A detector reports a
+    `type="magic_bytes"` Evidence entry precisely when its signature is a
+    real fixed byte sequence at a known offset (GGUF's `GGUF` at 0, tar's
+    `ustar` at 257, ...); every such entry already carries the exact
+    matched bytes as hex. A detector whose evidence is descriptive instead
+    (safetensors' header validity, pickle's protocol, an archive member
+    name) has nothing to contribute here, and this returns "" rather than
+    substituting an unrelated raw read -- which is exactly the bug this
+    replaces: a blind `read(path, 0, 16)` doesn't know that tar's magic
+    lives at offset 257, so it recorded the first archive member's
+    filename instead."""
+    for item in evidence:
+        if item.type == "magic_bytes":
+            return item.value
+    return ""
+
+
 class Artifact(BaseModel):
     path: str
     size: int
@@ -44,16 +63,15 @@ class Artifact(BaseModel):
         size = path.stat().st_size
         sha256, sha512 = compute_file_hashes(path)
         declared_format = declared_format_from_extension(path)
-        detected_format, format_confidence, _evidence = detect_format(path)
-        # Only recorded when a detector actually matched: for a known
-        # format these bytes are the magic number/header, which is the
-        # evidence this field exists for. For "unknown" they're just the
-        # first 16 bytes of whatever the file happens to contain -- and
-        # BEE scans directories that can hold more than model weights
-        # (a stray .env, a token file, a config). Recording them
-        # unconditionally meant that content ended up in terminal output,
-        # JSON, and the run database regardless of relevance.
-        magic_bytes_hex = read_magic_bytes_hex(path) if detected_format != "unknown" else ""
+        detected_format, format_confidence, format_evidence = detect_format(path)
+        # Derived from the matching detector's own evidence -- see
+        # _magic_bytes_from_evidence -- rather than a separate blind read.
+        # This is what actually fixes both the general case (nothing is
+        # recorded for "unknown", since there's no evidence to draw from)
+        # and the specific one (tar's real magic is at offset 257, not 0;
+        # a blind fixed-offset read had been recording the first archive
+        # member's filename instead of tar's signature).
+        magic_bytes_hex = _magic_bytes_from_evidence(format_evidence)
         is_symlink = path.is_symlink()
         # resolve(strict=False) so a broken symlink still records where it
         # points, instead of raising.
