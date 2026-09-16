@@ -60,6 +60,9 @@ bee --format json scan ./models --deterministic
 bee history
 bee show <run-id>
 bee show <run-id> --fail-on critical
+
+# Has anything changed since this was vetted?
+bee verify <run-id>
 ```
 
 ### Example
@@ -168,6 +171,36 @@ Finding:          BEE-STS-001 [high] SafeTensors header declares invalid or over
 with one tensor's `data_offsets` end pushed 10MB past the actual file —
 the header still parses as valid JSON, so format detection alone would
 call this a clean safetensors file.)
+
+## Evidence integrity and re-verification
+
+Every stored run carries an `evidence_sha256` — a hash of exactly what
+was scanned and what was found (the target, every artifact record, every
+finding, the scanner version), independent of the run's id or timestamp.
+Two scans of identical, unchanged input get the same evidence hash even
+without `--deterministic`; the run id identifies *which* recorded run
+found it, the evidence hash identifies *what* it found.
+
+`bee verify <run-id>` checks two different things against that record:
+whether it's been altered since it was written (a hand-edited database
+row, say), and whether each artifact's *current* file content still
+matches the hash recorded when it was vetted:
+
+```
+$ bee verify b74ff8e6-d316-4d7a-9dc5-ff536d4f5deb
+Evidence record:  OK (3863d8f944c2a230...)
+
+Artifacts:
+  CHANGED  models/weights.gguf
+           recorded: 1ef5107f394ec3b832bbcf48f4723c94100a3fe3da695bce60392a882777b7ff
+           current:  dae83aba02090c4963c2573ce22cbb2f466afb554547dc60524c6b90273809d3
+```
+
+A path that was a normal file (or a safe in-root symlink) when it was
+vetted, but has since been replaced with a symlink escaping the original
+scan root, is flagged as `ESCAPED` rather than silently re-hashed — the
+same protection `scan`/`inspect` apply during vetting also holds during
+re-verification.
 
 ## What BEE detects today
 

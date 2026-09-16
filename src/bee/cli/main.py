@@ -11,6 +11,7 @@ from bee.cli.inspect import inspect_command
 from bee.cli.scan import scan_command
 from bee.cli.show import show_command
 from bee.cli.state import AppState, OutputFormat
+from bee.cli.verify import verify_command
 
 app = typer.Typer(help="BEE - AI model supply-chain vetting CLI.")
 
@@ -47,3 +48,4 @@ app.command("scan")(scan_command)
 app.command("inspect")(inspect_command)
 app.command("history")(history_command)
 app.command("show")(show_command)
+app.command("verify")(verify_command)

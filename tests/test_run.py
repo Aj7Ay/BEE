@@ -1,5 +1,6 @@
+from bee import __version__
 from bee.core.artifact import Artifact
-from bee.core.run import Run, build_summary
+from bee.core.run import Run, build_summary, compute_evidence_hash
 from bee.evidence.finding import Confidence, Evidence, Finding, Severity
 
 
@@ -55,3 +56,31 @@ def test_non_deterministic_runs_have_distinct_ids():
     run_a = Run.from_scan(target_path="./models", artifacts=[_artifact()], findings=[])
     run_b = Run.from_scan(target_path="./models", artifacts=[_artifact()], findings=[])
     assert run_a.id != run_b.id
+
+
+def test_run_records_scanner_version_and_evidence_hash():
+    run = Run.from_scan(target_path="./models", artifacts=[_artifact()], findings=[_finding()])
+    assert run.scanner_version == __version__
+    assert len(run.evidence_sha256) == 64  # a real sha256 hex digest, not left blank
+
+
+def test_evidence_hash_is_stable_for_identical_content_ids_and_timestamps_aside():
+    # Non-deterministic runs still get identical evidence hashes for
+    # identical scan content -- the hash identifies *what* was found,
+    # the run id identifies *which recorded run* found it.
+    run_a = Run.from_scan(target_path="./models", artifacts=[_artifact()], findings=[_finding()])
+    run_b = Run.from_scan(target_path="./models", artifacts=[_artifact()], findings=[_finding()])
+    assert run_a.id != run_b.id
+    assert run_a.evidence_sha256 == run_b.evidence_sha256
+
+
+def test_evidence_hash_changes_when_findings_differ():
+    run_a = Run.from_scan(target_path="./models", artifacts=[_artifact()], findings=[_finding()])
+    run_b = Run.from_scan(target_path="./models", artifacts=[_artifact()], findings=[])
+    assert run_a.evidence_sha256 != run_b.evidence_sha256
+
+
+def test_compute_evidence_hash_matches_what_from_scan_stores():
+    run = Run.from_scan(target_path="./models", artifacts=[_artifact()], findings=[_finding()])
+    recomputed = compute_evidence_hash(run.target_path, run.artifacts, run.findings, run.scanner_version)
+    assert recomputed == run.evidence_sha256
