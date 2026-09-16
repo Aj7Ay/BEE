@@ -65,6 +65,25 @@ ALLOWED_GLOBALS = frozenset({
 })
 
 
+def _module_of(global_name: str) -> str:
+    return global_name.rsplit(".", 1)[0] if "." in global_name else global_name
+
+
+# Modules that DANGEROUS_GLOBALS names live in, derived rather than
+# hand-maintained so it can't drift out of sync as that list changes.
+# An *unrecognized* reference into one of these modules (os.setuid, say --
+# dangerous, just not one of the specific names above) is treated with
+# the same suspicion as a listed one. An unrecognized reference to
+# anything else -- almost always a user's own training-script class
+# (__main__.MyModel) or a library type the allowlist doesn't happen to
+# name -- is not: real checkpoints from custom code reference such
+# classes constantly, and a finding that fires on nearly every real
+# checkpoint gets muted, taking the genuine "os.setuid" case down with
+# it. See DANGEROUS_GLOBALS/ALLOWED_GLOBALS above for why this can't just
+# be "allowlist everything else."
+_RISKY_MODULES = frozenset(_module_of(g) for g in DANGEROUS_GLOBALS if "." in g)
+
+
 def _analysis_for(artifact: Artifact) -> PickleAnalysis | None:
     path = Path(artifact.path)
     if artifact.detected_format == "pickle":
@@ -117,13 +136,24 @@ def check_pickle_calls(artifact: Artifact) -> Finding | None:
     if not unrecognized and not unresolved_count:
         return None
 
+    risky = [g for g in unrecognized if _module_of(g) in _RISKY_MODULES]
+    # An unresolved STACK_GLOBAL target is inherently uncertain -- not
+    # knowing what it points to is itself a reason not to wave it through
+    # at the lowest tier, the same way a risky-module reference isn't.
+    if risky or unresolved_count:
+        severity = Severity.MEDIUM
+        title = "Pickle references an unrecognized global in a sensitive module"
+    else:
+        severity = Severity.LOW
+        title = "Pickle references an unrecognized global"
+
     parts = list(unrecognized)
     if unresolved_count:
         parts.append(f"{unresolved_count} unresolved STACK_GLOBAL reference(s)")
     return Finding(
         id="BEE-PKL-002",
-        severity=Severity.MEDIUM,
-        title="Pickle references an unrecognized global",
+        severity=severity,
+        title=title,
         description=(
             "This pickle's opcode stream references callables/classes not "
             "recognized as either a known-safe checkpoint helper or a "

@@ -27,6 +27,24 @@ class _UnrecognizedGlobal:
         return (math.sqrt, (4,))
 
 
+class _UnrecognizedRiskyModuleGlobal:
+    def __reduce__(self):
+        import os
+
+        # A real, dangerous os.* call that just isn't on the exact-match
+        # denylist -- the case the denylist's own safety net exists for.
+        return (os.setuid, (0,))
+
+
+class _CustomTrainingClass:
+    """Stands in for a real checkpoint's custom user-defined class
+    (commonly __main__.MyModel or similar) -- something the allowlist
+    was never going to name, that isn't itself dangerous."""
+
+    def __init__(self, value):
+        self.value = value
+
+
 def _write(path, obj, protocol):
     path.write_bytes(pickle.dumps(obj, protocol=protocol))
 
@@ -126,7 +144,10 @@ def test_check_pickle_calls_allows_known_checkpoint_helpers(tmp_path):
     assert finding is None
 
 
-def test_check_pickle_calls_flags_unrecognized_global_as_medium(tmp_path):
+def test_check_pickle_calls_flags_unrecognized_global_in_ordinary_module_as_low(tmp_path):
+    # A reference to something in an unremarkable module (math) that's
+    # neither dangerous nor allowlisted -- worth a look, but not the same
+    # concern as an unrecognized function in os/subprocess/etc.
     path = tmp_path / "unknown.pkl"
     _write(path, _UnrecognizedGlobal(), protocol=4)
 
@@ -135,8 +156,46 @@ def test_check_pickle_calls_flags_unrecognized_global_as_medium(tmp_path):
 
     assert finding is not None
     assert finding.id == "BEE-PKL-002"
-    assert finding.severity.value == "medium"
+    assert finding.severity.value == "low"
     assert "math.sqrt" in finding.description
+
+
+def test_check_pickle_calls_flags_unrecognized_risky_module_global_as_medium(tmp_path):
+    # os.setuid isn't on the exact-match denylist, but it's in a module
+    # (os) that other denylisted names live in -- this is the case the
+    # denylist's safety net exists for, and it must not be diluted to the
+    # same LOW severity as an unrelated custom class.
+    path = tmp_path / "risky.pkl"
+    _write(path, _UnrecognizedRiskyModuleGlobal(), protocol=4)
+
+    artifact = _artifact_for(path)
+    finding = check_pickle_calls(artifact)
+
+    assert finding is not None
+    assert finding.id == "BEE-PKL-002"
+    assert finding.severity.value == "medium"
+    # os.setuid resolves as posix.setuid on this platform, same as
+    # os.system does -- "posix" is risky because posix.system is
+    # denylisted, so an unrecognized posix.* function inherits that.
+    assert "posix.setuid" in finding.description
+
+
+def test_check_pickle_calls_flags_custom_training_class_as_low_not_medium(tmp_path):
+    # Regression test: a checkpoint referencing the user's own training
+    # code (or any library class the allowlist doesn't name) is the
+    # overwhelmingly common case for real checkpoints, not a rare one --
+    # flagging it at the same MEDIUM severity as a genuinely suspicious
+    # os.* reference would make the finding fire on nearly every real
+    # model and get muted, taking the case that matters down with it.
+    path = tmp_path / "custom.pkl"
+    _write(path, _CustomTrainingClass(1), protocol=4)
+
+    artifact = _artifact_for(path)
+    finding = check_pickle_calls(artifact)
+
+    assert finding is not None
+    assert finding.id == "BEE-PKL-002"
+    assert finding.severity.value == "low"
 
 
 def test_check_pickle_calls_none_for_plain_data(tmp_path):

@@ -92,10 +92,17 @@ references:
 - **`BEE-PKL-001` (critical)** — references a known code-execution or
   destructive primitive (`os.system`, `subprocess.Popen`, `eval`,
   `shutil.rmtree`, ...) and names exactly which one
-- **`BEE-PKL-002` (medium)** — references something that's neither a
-  recognized dangerous primitive nor a known-safe checkpoint helper
-  (`torch._utils._rebuild_tensor_v2`, `collections.OrderedDict`, ...) —
-  worth a manual look, not an automatic pass or fail
+- **`BEE-PKL-002` (medium)** — references something unrecognized in a
+  module that *also* contains known-dangerous primitives (an `os.*` or
+  `subprocess.*` function not on the exact list above) — as suspicious as
+  an exact match, just not one BEE can name with full confidence
+- **`BEE-PKL-002` (low)** — references something else unrecognized (a
+  user's own training-script class, an uncommon library type) that's
+  neither dangerous nor a known-safe checkpoint helper
+  (`torch._utils._rebuild_tensor_v2`, `collections.OrderedDict`, ...).
+  This is the common case for a real checkpoint from custom code, which
+  is exactly why it's LOW and not MEDIUM — a finding that fires on nearly
+  every real model gets muted, taking the genuine `os.*` case down with it
 
 ```
 $ bee scan ./models
