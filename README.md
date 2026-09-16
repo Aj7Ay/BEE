@@ -11,10 +11,10 @@ that means establishing an artifact's identity, detecting its real
 structural format (never trusting the file extension), and flagging
 mismatches between the two.
 
-This is early. Static security analysis beyond format-mismatch detection
-(pickle call-graph analysis, SafeTensors bounds checks, GGUF metadata
-inspection, and more), provenance, supply-chain checks, licensing, and
-policy enforcement are planned in later releases.
+This is early. Beyond format-mismatch detection and pickle call-graph
+analysis (below), deeper static security analysis (SafeTensors bounds
+checks, GGUF metadata inspection, and more), provenance, supply-chain
+checks, licensing, and policy enforcement are planned in later releases.
 
 ## Install
 
@@ -80,6 +80,44 @@ Findings: 0 critical, 0 high, 0 medium, 1 low, 0 info
 `weights.pt` is flagged (`BEE-FMT-001`) because its extension claims
 PyTorch but the file is structurally a NumPy array — exactly the kind of
 mismatch a renamed or mislabeled artifact would produce.
+
+## Pickle call-graph analysis
+
+A pickle-based file can be exactly what it claims to be — no format
+mismatch, correctly named `.pt` — and still execute arbitrary code the
+moment it's loaded. BEE reads the actual opcode stream (for both raw
+pickle files and PyTorch's zip-wrapped checkpoints) and reports what it
+references:
+
+- **`BEE-PKL-001` (critical)** — references a known code-execution or
+  destructive primitive (`os.system`, `subprocess.Popen`, `eval`,
+  `shutil.rmtree`, ...) and names exactly which one
+- **`BEE-PKL-002` (medium)** — references something that's neither a
+  recognized dangerous primitive nor a known-safe checkpoint helper
+  (`torch._utils._rebuild_tensor_v2`, `collections.OrderedDict`, ...) —
+  worth a manual look, not an automatic pass or fail
+
+```
+$ bee scan ./models
+BEE SCAN
+Target: models
+Artifacts scanned: 2
+┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━┳━━━━━━━━━━┓
+┃ PATH                    ┃ FORMAT  ┃ SIZE ┃ FINDINGS ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━╇━━━━━━━━━━┩
+│ models/clean.pt         │ pytorch │ 287  │ -        │
+│ models/legit_looking.pt │ pytorch │ 297  │ 1        │
+└─────────────────────────┴─────────┴──────┴──────────┘
+Findings: 1 critical, 0 high, 0 medium, 0 low, 0 info
+
+Critical/High findings:
+  BEE-PKL-001  models/legit_looking.pt: Pickle references a dangerous primitive
+```
+
+Both files here are honestly named, correctly formatted PyTorch
+checkpoints — no `BEE-FMT-001` involved. `legit_looking.pt` is flagged
+because its embedded pickle references `posix.system` (how `os.system`
+resolves internally) and calls it via `REDUCE` on load.
 
 ## What BEE detects today
 

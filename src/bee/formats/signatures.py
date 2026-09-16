@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import json
-import pickletools
 import struct
 import zipfile
 from pathlib import Path
 
 from bee.evidence.finding import Confidence, Evidence
+from bee.formats.pickle_ops import analyze_pickle_file
 
 DetectionResult = tuple[str, Confidence, list[Evidence]]
 
@@ -134,48 +134,25 @@ def detect_tar(path: Path) -> DetectionResult | None:
     )
 
 
-# Bound detection by OPCODE COUNT, not by a byte-offset/prefix-size cutoff.
-# An earlier version of this detector read only a fixed byte prefix into
-# memory before parsing it — which meant any pickle payload padded past
-# that prefix (e.g. by embedding it in a multi-megabyte disguised
-# checkpoint) fell outside the sniffed window and was misreported as
-# "unknown", recreating the exact bypass this detector exists to close.
-# Streaming genops() from the open file handle instead means STOP is
-# found at whatever byte offset it actually occurs at, however large the
-# file — a real malicious payload is a handful of opcodes regardless of
-# how much the attacker pads the file around it. The opcode cap below
-# exists only to bound CPU against a pathological "opcode bomb" (millions
-# of tiny opcodes before ever reaching STOP), not to limit how far into
-# the file we're willing to look.
-_MAX_PICKLE_OPCODES = 100_000
-
-
 def detect_pickle(path: Path) -> DetectionResult | None:
-    protocol: int | None = None
-    found_stop = False
-    try:
-        with path.open("rb") as f:
-            for i, (opcode, arg, _pos) in enumerate(pickletools.genops(f)):
-                if i >= _MAX_PICKLE_OPCODES:
-                    break
-                if opcode.name == "PROTO":
-                    protocol = arg
-                if opcode.name == "STOP":
-                    found_stop = True
-                    break
-    except OSError:
-        return None
-    except (ValueError, EOFError, IndexError):
-        return None
-
-    if not found_stop:
+    # Shared with the pickle call-graph analysis (bee.evidence.pickle_calls)
+    # -- one opcode-walking implementation, not a second copy that could
+    # drift from it. See bee.formats.pickle_ops for why this streams from
+    # the file handle bounded by opcode count rather than a byte prefix:
+    # an earlier fixed-prefix version reintroduced the exact evasion this
+    # detector exists to close.
+    analysis = analyze_pickle_file(path)
+    if analysis is None:
         return None
 
     # pickle.load() stops at the first STOP opcode and ignores everything
     # after it — so do we. Anything appended past this point (a trailing
     # null byte, a newline, arbitrary padding) does not change whether the
     # file executes as a pickle, and must not be able to hide it from us.
-    protocol_label = f"pickle_protocol_{protocol}" if protocol is not None else "pickle_protocol_0_or_1"
+    protocol_label = (
+        f"pickle_protocol_{analysis.protocol}" if analysis.protocol is not None
+        else "pickle_protocol_0_or_1"
+    )
     return (
         "pickle",
         Confidence.SUPPORTED,
