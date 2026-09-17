@@ -8,8 +8,10 @@ from bee import __version__
 from bee.cli.history import history_command
 from bee.cli.init import init_command
 from bee.cli.inspect import inspect_command
+from bee.cli.keygen import keygen_command
 from bee.cli.scan import scan_command
 from bee.cli.show import show_command
+from bee.cli.sign import sign_command
 from bee.cli.state import AppState, OutputFormat
 from bee.cli.verify import verify_command
 
@@ -49,3 +51,5 @@ app.command("inspect")(inspect_command)
 app.command("history")(history_command)
 app.command("show")(show_command)
 app.command("verify")(verify_command)
+app.command("keygen")(keygen_command)
+app.command("sign")(sign_command)

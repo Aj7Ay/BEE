@@ -8,6 +8,7 @@ import typer
 from bee.cli.state import OutputFormat
 from bee.core.artifact import compute_file_hashes
 from bee.core.run import compute_evidence_hash
+from bee.core.signing import fingerprint, verify_signature
 from bee.evidence.symlink import is_escaping_symlink
 from bee.storage.db import load_run
 
@@ -21,18 +22,21 @@ def verify_command(
 
     Two independent things are checked: whether the recorded evidence
     (the findings and artifact records BEE originally produced) still
-    hashes to what was stored, and whether each artifact's *current*
+    matches what was recorded, and whether each artifact's *current*
     file content still matches the hash recorded when it was vetted --
     catching the artifact having been swapped or modified since.
 
-    The evidence check is an unkeyed hash (see
-    bee.core.run.compute_evidence_hash) -- it catches accidental
-    corruption and naive edits to the stored record, not a capable
-    attacker who can write to the database and recompute a matching
-    hash after editing it. A clean result here means the record is
-    internally self-consistent, not that it's cryptographically
-    guaranteed untouched; that guarantee needs a keyed hash or a
-    signature, which isn't built yet.
+    For a signed run (see `bee sign`), the evidence check verifies the
+    Ed25519 signature against the recomputed hash -- a capable attacker
+    who edits the record cannot produce a valid signature over the new
+    content without the private key, which the record never contains.
+    For an unsigned run, it falls back to a plain hash comparison (see
+    bee.core.run.compute_evidence_hash): that catches accidental
+    corruption and naive edits, but not a capable attacker who
+    recomputes a matching hash after editing the database. A clean
+    result on an unsigned run means the record is internally
+    self-consistent, not cryptographically guaranteed untouched --
+    `bee sign` is what closes that gap.
     """
     state = ctx.obj
     run = load_run(state.db_path, run_id)
@@ -43,7 +47,18 @@ def verify_command(
     recomputed_hash = compute_evidence_hash(
         run.target_path, run.artifacts, run.findings, run.scanner_version
     )
-    evidence_ok = recomputed_hash == run.evidence_sha256
+    is_signed = bool(run.signature and run.public_key)
+    if is_signed:
+        # Verified against the freshly recomputed hash, not the stored
+        # evidence_sha256 -- an attacker who edits findings/artifacts and
+        # updates the stored hash to match still can't produce a
+        # signature that verifies against the *new* hash without the
+        # private key.
+        evidence_ok = verify_signature(recomputed_hash, run.signature, run.public_key)
+        signer_fingerprint = fingerprint(bytes.fromhex(run.public_key))
+    else:
+        evidence_ok = recomputed_hash == run.evidence_sha256
+        signer_fingerprint = None
 
     # Anchor to the absolute location recorded at scan time, not the
     # given target_path as-is: a relative target_path ("./models") only
@@ -108,6 +123,8 @@ def verify_command(
     if state.output_format is OutputFormat.JSON:
         payload = {
             "run_id": run.id,
+            "signed": is_signed,
+            "signer_fingerprint": signer_fingerprint,
             "evidence_ok": evidence_ok,
             "recorded_evidence_sha256": run.evidence_sha256,
             "recomputed_evidence_sha256": recomputed_hash,
@@ -117,8 +134,14 @@ def verify_command(
         typer.echo(jsonlib.dumps(payload, indent=2))
     else:
         typer.echo(f"Run:              {run.id}")
-        if evidence_ok:
-            typer.echo(f"Evidence record:  OK ({run.evidence_sha256[:16]}...)")
+        if is_signed:
+            if evidence_ok:
+                typer.echo(f"Evidence record:  SIGNED, VALID (signer {signer_fingerprint})")
+            else:
+                typer.echo(f"Evidence record:  SIGNED, INVALID (signer {signer_fingerprint})")
+                typer.echo("  the signature does not verify against the current recorded content")
+        elif evidence_ok:
+            typer.echo(f"Evidence record:  OK, unsigned ({run.evidence_sha256[:16]}...)")
         else:
             typer.echo("Evidence record:  TAMPERED")
             typer.echo(f"  recorded:   {run.evidence_sha256}")

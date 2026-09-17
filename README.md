@@ -63,6 +63,11 @@ bee show <run-id> --fail-on critical
 
 # Has anything changed since this was vetted?
 bee verify <run-id>
+
+# Cryptographically sign a vetting record, and verify it later
+bee keygen
+bee sign <run-id>
+bee verify <run-id>   # now checks the signature, not just a plain hash
 ```
 
 ### Example
@@ -202,16 +207,39 @@ scan root, is flagged as `ESCAPED` rather than silently re-hashed — the
 same protection `scan`/`inspect` apply during vetting also holds during
 re-verification.
 
-**What the evidence check does and doesn't prove:** `evidence_sha256` is
+**What an unsigned record does and doesn't prove:** `evidence_sha256` is
 a plain, unkeyed sha256 stored right next to the data it covers. It
 catches accidental corruption and naive edits to the stored record —
 not a capable attacker who can write to the database, since the
 algorithm is public and such an attacker can simply recompute a
-matching hash after editing it. A clean `bee verify` means the record is
-internally self-consistent; it isn't a cryptographic guarantee that no
-one who understands this format has touched it. That guarantee needs a
-keyed hash or a real signature, which is a planned, separate feature —
-not yet built.
+matching hash after editing it. A clean `bee verify` on an *unsigned*
+run means the record is internally self-consistent; it isn't a
+cryptographic guarantee that no one who understands this format has
+touched it. `bee sign` is what closes that gap — see below.
+
+## Signing
+
+`bee keygen` generates an Ed25519 keypair in `~/.bee/keys/` by default —
+outside any project's `.bee/` workspace, so a project's database can be
+freely copied or shared without the private key going with it. `bee sign
+<run-id>` signs the run's evidence hash; `bee verify` then checks the
+signature instead of falling back to the plain hash comparison.
+
+The difference matters exactly where the plain hash fails: an attacker
+who edits a signed run's findings and recomputes `evidence_sha256` to
+match — the same forgery a plain hash comparison can't detect — still
+can't produce a signature that verifies against the new content,
+because the private key never touches the database:
+
+```
+$ bee verify a8d7761e-f342-4865-b38a-1f1a3d96e531
+Evidence record:  SIGNED, INVALID (signer 305ddefe24f7baf3)
+  the signature does not verify against the current recorded content
+```
+
+The public key travels with the signature inside the record itself, so
+verifying never requires access to the signer's key files — only the
+record and the signature it already carries.
 
 ## What BEE detects today
 

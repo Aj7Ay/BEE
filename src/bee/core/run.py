@@ -88,6 +88,15 @@ class Run(BaseModel):
     summary: RunSummary
     scanner_version: str = __version__
     evidence_sha256: str = ""
+    # Populated by `bee sign`, empty until then. signature is an Ed25519
+    # signature (hex) over the evidence hash *at signing time*;
+    # public_key (hex, raw 32 bytes) travels with it so verification
+    # never needs the signer's key files, only the record itself. Unlike
+    # evidence_sha256 alone, a valid signature cannot be reproduced by
+    # someone who edits the record and recomputes the hash -- that
+    # requires the private key, which is never stored here.
+    signature: str = ""
+    public_key: str = ""
 
     @classmethod
     def from_scan(
