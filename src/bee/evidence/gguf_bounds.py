@@ -38,7 +38,7 @@ def _tensor_problem(tensor: GgufTensorInfo, tensor_data_start: int, alignment: i
     return None
 
 
-def check_gguf_bounds(artifact: Artifact) -> Finding | None:
+def check_gguf_bounds(artifact: Artifact, content: bytes | None = None) -> Finding | None:
     """A file can be structurally recognizable as GGUF (correct magic,
     a header that parses) while its tensor table still lies about where
     each tensor's bytes actually are -- an offset past the end of the
@@ -47,10 +47,16 @@ def check_gguf_bounds(artifact: Artifact) -> Finding | None:
     what's left. The single most common real-world trigger for this is
     an incomplete download, not an attack -- but either way, a file a
     naive loader would read past its own end is worth flagging.
+
+    `content`, when provided, is this same artifact's already-buffered
+    bytes (see Artifact.from_file / bee.formats.io_source) -- analyzed
+    directly instead of re-opening artifact.path, so this can't see
+    different content than what was actually hashed if the file changed
+    on disk in between.
     """
     if artifact.detected_format != "gguf":
         return None
-    analysis = analyze_gguf(Path(artifact.path))
+    analysis = analyze_gguf(content if content is not None else Path(artifact.path))
     if analysis is None:
         return None
 

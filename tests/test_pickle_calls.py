@@ -1,10 +1,13 @@
 import pickle
 import zipfile
 
+import pytest
+
 from bee.core.artifact import Artifact
 from bee.evidence.pickle_calls import check_pickle_calls
 from bee.formats.pickle_ops import (
     MAX_PICKLE_OPCODES,
+    MAX_PICKLE_STREAM_BYTES,
     UNRESOLVED_STACK_GLOBAL,
     analyze_pickle_file,
     analyze_pytorch_zip_pickle,
@@ -456,6 +459,114 @@ def test_analyze_pickle_file_normal_pickle_does_not_set_cap_hit(tmp_path):
     analysis = analyze_pickle_file(path)
     assert analysis is not None
     assert analysis.opcode_cap_hit is False
+
+
+def _build_oversized_blob_then_rce(command: str, blob_size: int) -> bytes:
+    """PROTO 4, one real (not just declared) BINBYTES blob of `blob_size`
+    bytes, then a real os.system(command) RCE -- a genuine, loadable
+    payload where a single opcode legitimately claims a huge amount of
+    real data, unlike a declared-length that exceeds what's actually in
+    the file. Only ~15 opcodes total: MAX_PICKLE_OPCODES (100,000) does
+    nothing to bound this -- only a byte-size cap on the stream does."""
+    blob_opcode = b"B" + blob_size.to_bytes(4, "little") + (b"\x00" * blob_size)
+    tail = (
+        _short_binunicode("os") + b"\x94"
+        + _short_binunicode("system") + b"\x94"
+        + b"\x93"  # STACK_GLOBAL
+        + _short_binunicode(command) + b"\x94"
+        + b"\x85"  # TUPLE1
+        + b"R"  # REDUCE
+        + b"."  # STOP
+    )
+    return b"\x80\x04" + blob_opcode + tail
+
+
+def test_analyze_pickle_file_treats_oversized_stream_as_cap_hit_not_none(tmp_path):
+    path = tmp_path / "huge.pkl"
+    path.write_bytes(b"\x00" * (MAX_PICKLE_STREAM_BYTES + 1024))
+
+    analysis = analyze_pickle_file(path)
+
+    assert analysis is not None
+    assert analysis.opcode_cap_hit is True
+
+
+def test_analyze_pickle_file_under_size_cap_is_unaffected(tmp_path):
+    path = tmp_path / "small.pkl"
+    _write(path, {"x": 1}, protocol=4)
+
+    analysis = analyze_pickle_file(path)
+
+    assert analysis is not None
+    assert analysis.opcode_cap_hit is False
+
+
+def test_check_pickle_calls_flags_oversized_stream_with_real_rce_after_it(tmp_path):
+    # The regression this guards against: a real (backed by actual
+    # bytes, not just a declared length) blob large enough that reading
+    # it risks exhausting memory, with a real os.system RCE placed right
+    # after it -- only ~15 opcodes total, nowhere near MAX_PICKLE_OPCODES,
+    # so the opcode-count cap alone would never catch it. The byte-size
+    # cap must reject the stream before ever attempting to read the blob.
+    path = tmp_path / "evil.pkl"
+    path.write_bytes(_build_oversized_blob_then_rce("id", blob_size=MAX_PICKLE_STREAM_BYTES + 1024))
+
+    artifact = _artifact_for(path)
+    assert artifact.detected_format == "pickle"
+    finding = check_pickle_calls(artifact)
+
+    assert finding is not None
+    assert finding.id == "BEE-PKL-003"
+    assert finding.severity.value == "high"
+
+
+def test_check_pickle_calls_flags_oversized_pytorch_zip_member_before_decompressing(tmp_path):
+    # The zip-bomb-shaped variant: a data.pkl member whose declared
+    # uncompressed size exceeds the cap must be rejected using the zip's
+    # own metadata, before ever calling zf.open()/decompressing it --
+    # a small compressed size on disk is not evidence of a small amount
+    # of work to read it.
+    path = tmp_path / "evil.pt"
+    payload = _build_oversized_blob_then_rce("id", blob_size=MAX_PICKLE_STREAM_BYTES + 1024)
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("archive/data.pkl", payload)
+        zf.writestr("archive/version", "3")
+
+    artifact = _artifact_for(path)
+    assert artifact.detected_format == "pytorch"
+    finding = check_pickle_calls(artifact)
+
+    assert finding is not None
+    assert finding.id == "BEE-PKL-003"
+    assert finding.severity.value == "high"
+
+
+def test_analyze_pickle_file_returns_none_for_declared_length_past_actual_bytes(tmp_path):
+    # A BINBYTES declaring far more bytes than the file actually has is
+    # not a working bypass to guard against: pickle.load() itself raises
+    # on the exact same file (the declared bytes genuinely aren't there),
+    # so there is no payload hiding behind it to miss. Confirmed both
+    # ways: BEE reports no findings, and a real unpickle attempt fails
+    # identically -- this is an inert, non-functional file, not evidence
+    # of a detection gap the way the opcode-count cap bypass was.
+    path = tmp_path / "inert.pkl"
+    path.write_bytes(b"\x80\x04B" + (0xFFFFFFFE).to_bytes(4, "little"))
+
+    assert analyze_pickle_file(path) is None
+    with pytest.raises(Exception):  # noqa: B017 -- any failure confirms it's inert
+        pickle.loads(path.read_bytes())
+
+
+def test_scan_does_not_crash_on_huge_declared_length_opcode(tmp_path):
+    # Regression test for an uncaught exception (ValueError/MemoryError)
+    # from pickletools.genops when an opcode declares a length far past
+    # what the file actually has -- must degrade to "no findings", not
+    # propagate and abort the scan.
+    path = tmp_path / "crash_attempt.pkl"
+    path.write_bytes(b"\x80\x04\x8d" + (10**15).to_bytes(8, "little"))  # BINUNICODE8
+
+    artifact = _artifact_for(path)
+    assert check_pickle_calls(artifact) is None
 
 
 def test_allowed_globals_covers_the_calibrated_real_checkpoint_corpus():

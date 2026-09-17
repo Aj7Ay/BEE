@@ -55,7 +55,7 @@ def inspect_command(
             return
 
     try:
-        artifact = Artifact.from_file(path)
+        artifact, content = Artifact.from_file_with_content(path)
     except OSError as exc:
         typer.echo(f"Error: could not read {sanitize_for_terminal(str(path))}: {exc}", err=True)
         raise typer.Exit(code=1) from exc
@@ -63,27 +63,27 @@ def inspect_command(
     mismatch = check_mismatch(artifact)
     if mismatch is not None:
         findings.append(mismatch)
-    pickle_finding = check_pickle_calls(artifact)
+    pickle_finding = check_pickle_calls(artifact, content)
     if pickle_finding is not None:
         findings.append(pickle_finding)
-    bounds_finding = check_safetensors_bounds(artifact)
+    bounds_finding = check_safetensors_bounds(artifact, content)
     if bounds_finding is not None:
         findings.append(bounds_finding)
-    gap_finding = check_safetensors_gap(artifact)
+    gap_finding = check_safetensors_gap(artifact, content)
     if gap_finding is not None:
         findings.append(gap_finding)
-    gguf_finding = check_gguf_bounds(artifact)
+    gguf_finding = check_gguf_bounds(artifact, content)
     if gguf_finding is not None:
         findings.append(gguf_finding)
 
-    _print_inspection(state, artifact, findings)
+    _print_inspection(state, artifact, findings, content)
     exit_if_threshold_met(findings, threshold)
 
 
-def _gguf_summary(artifact: Artifact) -> dict | None:
+def _gguf_summary(artifact: Artifact, content: bytes | None = None) -> dict | None:
     if artifact.detected_format != "gguf":
         return None
-    analysis = analyze_gguf(Path(artifact.path))
+    analysis = analyze_gguf(content if content is not None else Path(artifact.path))
     if analysis is None:
         return None
     architecture = analysis.metadata.get("general.architecture")
@@ -95,8 +95,10 @@ def _gguf_summary(artifact: Artifact) -> dict | None:
     }
 
 
-def _print_inspection(state, artifact: Artifact, findings: list[Finding]) -> None:
-    gguf_info = _gguf_summary(artifact)
+def _print_inspection(
+    state, artifact: Artifact, findings: list[Finding], content: bytes | None = None
+) -> None:
+    gguf_info = _gguf_summary(artifact, content)
 
     if state.output_format is OutputFormat.JSON:
         payload = {

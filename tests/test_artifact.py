@@ -1,7 +1,9 @@
 import hashlib
+import pickle
 
 from bee.core.artifact import Artifact, compute_file_hashes, read_magic_bytes_hex
 from bee.evidence.finding import Confidence
+from bee.evidence.pickle_calls import check_pickle_calls
 from tests.fixtures import builders
 
 
@@ -110,6 +112,81 @@ def test_artifact_from_file_unknown_format_has_no_magic_bytes(tmp_path):
 
     assert artifact.detected_format == "unknown"
     assert artifact.magic_bytes_hex == ""
+
+
+def test_from_file_with_content_buffers_small_files(tmp_path):
+    path = tmp_path / "model.gguf"
+    builders.write_gguf(path)
+
+    artifact, content = Artifact.from_file_with_content(path)
+
+    assert content is not None
+    assert content == path.read_bytes()
+    assert artifact.sha256 == hashlib.sha256(content).hexdigest()
+
+
+def test_from_file_with_content_returns_none_content_above_size_cap(tmp_path, monkeypatch):
+    # Buffering an entire multi-gigabyte real checkpoint just to close a
+    # race window would recreate the exact resource-exhaustion problem
+    # this project keeps fixing elsewhere -- files above the cap keep the
+    # previous per-stage re-open behavior instead.
+    path = tmp_path / "model.gguf"
+    builders.write_gguf(path)
+    monkeypatch.setattr("bee.core.artifact.TOCTOU_SAFE_MAX_BYTES", 0)
+
+    artifact, content = Artifact.from_file_with_content(path)
+
+    assert content is None
+    assert artifact.sha256 == compute_file_hashes(path)[0]
+
+
+def test_from_file_matches_from_file_with_content(tmp_path):
+    # from_file is now a thin wrapper -- must produce an identical
+    # Artifact record either way.
+    path = tmp_path / "model.gguf"
+    builders.write_gguf(path)
+
+    via_wrapper = Artifact.from_file(path)
+    via_full, _ = Artifact.from_file_with_content(path)
+
+    assert via_wrapper == via_full
+
+
+def test_from_file_with_content_closes_toctou_between_hash_and_deep_analysis(tmp_path):
+    # The regression this whole mechanism exists to close: a file
+    # replaced on disk between the hash pass and pickle_calls' own deep
+    # analysis used to mean the recorded hash and the content actually
+    # analyzed for danger could be two different files. Buffering once
+    # and reusing that buffer for both makes that impossible for a file
+    # under the size cap, regardless of what happens to the path
+    # afterwards.
+    class _OsSystemExploit:
+        def __reduce__(self):
+            import os
+
+            return (os.system, ("echo pwned",))
+
+    path = tmp_path / "evil.pt"
+    path.write_bytes(pickle.dumps(_OsSystemExploit(), protocol=4))
+
+    artifact, content = Artifact.from_file_with_content(path)
+    assert content is not None
+    assert artifact.sha256 == hashlib.sha256(content).hexdigest()
+
+    # Swap the file out from under the recorded path -- if check_pickle_calls
+    # re-opened `path` instead of using `content`, it would now be
+    # analyzing this replacement, not the file that was actually hashed.
+    path.write_bytes(b"not a pickle at all, just plain bytes")
+
+    finding = check_pickle_calls(artifact, content)
+    assert finding is not None
+    assert finding.id == "BEE-PKL-001"  # still sees the original RCE, not the replacement
+
+    # Without the buffer, the stale artifact (still claiming
+    # detected_format="pytorch"/"pickle" from before the swap) would now
+    # be pointed at content that no longer matches -- confirming the
+    # swap actually took effect on disk.
+    assert path.read_bytes() != content
 
 
 def test_unresolved_symlink_has_no_hash_or_content(tmp_path):

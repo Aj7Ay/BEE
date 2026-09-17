@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import struct
 import zipfile
-from pathlib import Path
 
 from bee.evidence.finding import Confidence, Evidence
+from bee.formats.io_source import Source, open_source
 from bee.formats.pickle_ops import analyze_pickle_file
 from bee.formats.safetensors_ops import analyze_safetensors
 
@@ -13,16 +13,16 @@ DetectionResult = tuple[str, Confidence, list[Evidence]]
 _PREFIX_READ_SIZE = 32
 
 
-def _read_prefix(path: Path, size: int = _PREFIX_READ_SIZE) -> bytes:
-    with path.open("rb") as f:
+def _read_prefix(source: Source, size: int = _PREFIX_READ_SIZE) -> bytes:
+    with open_source(source) as f:
         return f.read(size)
 
 
-def detect_safetensors(path: Path) -> DetectionResult | None:
+def detect_safetensors(source: Source) -> DetectionResult | None:
     # Shared with the bounds-checking finding (bee.evidence.safetensors_bounds)
     # -- one header-parsing implementation, not a second copy that could
     # drift from it.
-    if analyze_safetensors(path) is None:
+    if analyze_safetensors(source) is None:
         return None
     return (
         "safetensors",
@@ -32,7 +32,7 @@ def detect_safetensors(path: Path) -> DetectionResult | None:
     )
 
 
-def detect_gguf(path: Path) -> DetectionResult | None:
+def detect_gguf(source: Source) -> DetectionResult | None:
     # Deliberately a shallow magic-only check, not upgraded to require a
     # full bee.formats.gguf_ops.analyze_gguf() parse the way safetensors
     # requires a full header parse: "GGUF" is a 4-byte literal match with
@@ -40,7 +40,7 @@ def detect_gguf(path: Path) -> DetectionResult | None:
     # heuristic, which does need the deeper validation to mean anything.
     # Structural validation (and the findings it can produce) lives in
     # bee.evidence.gguf_bounds, independent of classification here.
-    prefix = _read_prefix(path, 4)
+    prefix = _read_prefix(source, 4)
     if prefix != b"GGUF":
         return None
     return (
@@ -51,8 +51,8 @@ def detect_gguf(path: Path) -> DetectionResult | None:
     )
 
 
-def detect_numpy(path: Path) -> DetectionResult | None:
-    prefix = _read_prefix(path, 6)
+def detect_numpy(source: Source) -> DetectionResult | None:
+    prefix = _read_prefix(source, 6)
     if prefix != b"\x93NUMPY":
         return None
     return (
@@ -63,8 +63,8 @@ def detect_numpy(path: Path) -> DetectionResult | None:
     )
 
 
-def detect_hdf5(path: Path) -> DetectionResult | None:
-    prefix = _read_prefix(path, 8)
+def detect_hdf5(source: Source) -> DetectionResult | None:
+    prefix = _read_prefix(source, 8)
     if prefix != b"\x89HDF\r\n\x1a\n":
         return None
     return (
@@ -75,12 +75,12 @@ def detect_hdf5(path: Path) -> DetectionResult | None:
     )
 
 
-def detect_zip_based(path: Path) -> DetectionResult | None:
-    prefix = _read_prefix(path, 4)
+def detect_zip_based(source: Source) -> DetectionResult | None:
+    prefix = _read_prefix(source, 4)
     if prefix != b"PK\x03\x04":
         return None
     try:
-        with zipfile.ZipFile(path) as zf:
+        with zipfile.ZipFile(open_source(source)) as zf:
             names = zf.namelist()
     except zipfile.BadZipFile:
         return None
@@ -99,8 +99,8 @@ def detect_zip_based(path: Path) -> DetectionResult | None:
     )
 
 
-def detect_gzip(path: Path) -> DetectionResult | None:
-    prefix = _read_prefix(path, 2)
+def detect_gzip(source: Source) -> DetectionResult | None:
+    prefix = _read_prefix(source, 2)
     if prefix != b"\x1f\x8b":
         return None
     return (
@@ -111,9 +111,9 @@ def detect_gzip(path: Path) -> DetectionResult | None:
     )
 
 
-def detect_tar(path: Path) -> DetectionResult | None:
+def detect_tar(source: Source) -> DetectionResult | None:
     try:
-        with path.open("rb") as f:
+        with open_source(source) as f:
             f.seek(257)
             magic = f.read(5)
     except OSError:
@@ -128,14 +128,14 @@ def detect_tar(path: Path) -> DetectionResult | None:
     )
 
 
-def detect_pickle(path: Path) -> DetectionResult | None:
+def detect_pickle(source: Source) -> DetectionResult | None:
     # Shared with the pickle call-graph analysis (bee.evidence.pickle_calls)
     # -- one opcode-walking implementation, not a second copy that could
     # drift from it. See bee.formats.pickle_ops for why this streams from
     # the file handle bounded by opcode count rather than a byte prefix:
     # an earlier fixed-prefix version reintroduced the exact evasion this
     # detector exists to close.
-    analysis = analyze_pickle_file(path)
+    analysis = analyze_pickle_file(source)
     if analysis is None:
         return None
 
@@ -230,8 +230,8 @@ def _looks_like_protobuf(data: bytes, min_fields: int = 2) -> bool:
     return True
 
 
-def detect_onnx(path: Path) -> DetectionResult | None:
-    prefix = _read_prefix(path, _ONNX_SNIFF_BYTES)
+def detect_onnx(source: Source) -> DetectionResult | None:
+    prefix = _read_prefix(source, _ONNX_SNIFF_BYTES)
     if not prefix or prefix[0] != 0x08:
         return None
     if not _looks_like_protobuf(prefix):

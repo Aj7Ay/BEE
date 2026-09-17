@@ -104,24 +104,28 @@ def _module_of(global_name: str) -> str:
 _RISKY_MODULES = frozenset(_module_of(g) for g in DANGEROUS_GLOBALS if "." in g)
 
 
-def _analysis_for(artifact: Artifact) -> PickleAnalysis | None:
-    path = Path(artifact.path)
+def _analysis_for(artifact: Artifact, content: bytes | None = None) -> PickleAnalysis | None:
+    source = content if content is not None else Path(artifact.path)
     if artifact.detected_format == "pickle":
-        return analyze_pickle_file(path)
+        return analyze_pickle_file(source)
     if artifact.detected_format == "pytorch":
-        return analyze_pytorch_zip_pickle(path)
+        return analyze_pytorch_zip_pickle(source)
     return None
 
 
-def check_pickle_calls(artifact: Artifact) -> Finding | None:
+def check_pickle_calls(artifact: Artifact, content: bytes | None = None) -> Finding | None:
     """For a file already determined to be (or embed) a pickle, identify
     what it actually references via GLOBAL/STACK_GLOBAL, and whether
     REDUCE -- the opcode that calls one of them -- is present. This is
     what turns "this is a pickle" into "this pickle calls os.system": a
     finding a format-mismatch check alone can never produce for a file
     that's honestly named .pt and genuinely is one.
+
+    `content`, when provided, is this same artifact's already-buffered
+    bytes (see Artifact.from_file / bee.formats.io_source), analyzed
+    directly instead of re-opening artifact.path.
     """
-    analysis = _analysis_for(artifact)
+    analysis = _analysis_for(artifact, content)
     if analysis is None:
         return None
 

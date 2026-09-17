@@ -3,8 +3,9 @@ from __future__ import annotations
 import pickletools
 import zipfile
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import IO
+
+from bee.formats.io_source import Source, open_source, size_of
 
 # Bound analysis by OPCODE COUNT, not by a byte-offset/prefix-size cutoff.
 # A fixed byte prefix read means any payload padded past that prefix (e.g.
@@ -18,6 +19,19 @@ from typing import IO
 # bomb" (millions of tiny opcodes before ever reaching STOP), not to limit
 # how far into the file we're willing to look.
 MAX_PICKLE_OPCODES = 100_000
+
+# The opcode-count cap above bounds *how many* opcodes run, but not what
+# any single one of them is allowed to claim -- a lone BINBYTES/
+# BINUNICODE8 opcode backed by real file bytes can declare a
+# multi-gigabyte length and still count as exactly one opcode toward
+# that cap, forcing an attempt to read/allocate all of it before analysis
+# can continue to whatever comes after. Bounding the whole stream's size
+# before analysis ever starts closes that regardless of which single
+# opcode would have tried to claim it. No real `data.pkl` (PyTorch's
+# actual tensor bytes live in separate zip members, not the pickle
+# stream itself) or standalone metadata pickle is anywhere near this
+# size; one that is is itself the anomaly.
+MAX_PICKLE_STREAM_BYTES = 64 * 1024 * 1024
 
 # Opcodes that push exactly one string value onto the interpreter stack.
 # Relevant only for resolving STACK_GLOBAL (protocol 4+), which pops the
@@ -58,11 +72,15 @@ class PickleAnalysis:
     protocol: int | None
     globals_referenced: list[str] = field(default_factory=list)
     reduce_count: int = 0
-    # True when the opcode cap (MAX_PICKLE_OPCODES) was hit before STOP
-    # was ever seen -- meaning everything after the cap, including a
-    # REDUCE that would call a dangerous primitive, was never inspected.
-    # This must not be conflated with "not a pickle": the file still
-    # loads and executes exactly like one; analysis was just cut short.
+    # True when analysis was cut short before ever reaching STOP --
+    # either because the opcode cap (MAX_PICKLE_OPCODES) was hit, or
+    # because an opcode declared a length/count that raised an exception
+    # (a stdlib bounds-check ValueError, or MemoryError) after at least
+    # one real opcode had already been parsed. Either way, everything
+    # past this point, including a REDUCE that would call a dangerous
+    # primitive, was never inspected. This must not be conflated with
+    # "not a pickle": the file can still load and execute exactly like
+    # one; analysis was just cut short.
     opcode_cap_hit: bool = False
 
 
@@ -145,7 +163,20 @@ def _analyze_stream(stream: IO[bytes]) -> PickleAnalysis | None:
             if name == "STOP":
                 found_stop = True
                 break
-    except (ValueError, EOFError, IndexError):
+    except (ValueError, EOFError, IndexError, MemoryError):
+        # A declared length/count that doesn't fit what's left in the
+        # stream (pickletools' own bounds check -- ValueError) makes a
+        # file that pickle.load() itself could never execute either: the
+        # declared bytes aren't there, so there's no working payload
+        # hiding behind it. Returning None ("not a pickle") for that case
+        # is correct, not a gap -- unlike the opcode-count cap, where the
+        # padding *was* real, loadable bytes with a real payload after it.
+        # MemoryError is caught as a pure backstop: the opcode-count cap
+        # above already bounds how many opcodes can run, and
+        # MAX_PICKLE_STREAM_BYTES (enforced by both callers below) bounds
+        # the size of the stream this ever gets to run against at all, so
+        # a single opcode's declared length can never legitimately exceed
+        # that ceiling by the time it would try to honor it.
         return None
 
     if not found_stop and not hit_opcode_cap:
@@ -161,27 +192,56 @@ def _analyze_stream(stream: IO[bytes]) -> PickleAnalysis | None:
     )
 
 
-def analyze_pickle_file(path: Path) -> PickleAnalysis | None:
-    """Walk every opcode of `path` as a raw pickle stream."""
+def _stream_too_large_analysis() -> PickleAnalysis:
+    # Reported the same way as hitting the opcode cap: analysis never
+    # ran at all, so nothing (dangerous or otherwise) can be named -- but
+    # a stream this large is itself the anomaly, and check_pickle_calls'
+    # BEE-PKL-003 handling of opcode_cap_hit already means "cut short,
+    # treat as suspicious" regardless of which bound caused that.
+    return PickleAnalysis(protocol=None, globals_referenced=[], reduce_count=0, opcode_cap_hit=True)
+
+
+def analyze_pickle_file(source: Source) -> PickleAnalysis | None:
+    """Walk every opcode of `source` as a raw pickle stream. `source` is
+    either a Path (opened and read here) or the file's already-read bytes
+    (see bee.formats.io_source)."""
     try:
-        with path.open("rb") as f:
+        if size_of(source) > MAX_PICKLE_STREAM_BYTES:
+            return _stream_too_large_analysis()
+        with open_source(source) as f:
             return _analyze_stream(f)
-    except OSError:
+    except (OSError, MemoryError):
+        # MemoryError is a pure backstop here: MAX_PICKLE_STREAM_BYTES
+        # above already keeps this from ever being attempted against a
+        # stream large enough to plausibly exhaust memory in the first
+        # place, the same belt-and-suspenders role RecursionError plays
+        # for the GGUF parser's own depth cap.
         return None
 
 
-def analyze_pytorch_zip_pickle(path: Path) -> PickleAnalysis | None:
+def analyze_pytorch_zip_pickle(source: Source) -> PickleAnalysis | None:
     """Walk the opcodes of the `data.pkl` member embedded in a PyTorch
     zip-format checkpoint -- the actual pickle stream a real `.pt`/`.pth`
-    file almost always is, as opposed to a raw pickle file."""
+    file almost always is, as opposed to a raw pickle file. `source` is
+    either a Path or the file's already-read bytes (see
+    bee.formats.io_source)."""
     try:
-        with zipfile.ZipFile(path) as zf:
+        with zipfile.ZipFile(open_source(source)) as zf:
             member_name = next(
                 (n for n in zf.namelist() if n == "data.pkl" or n.endswith("/data.pkl")), None
             )
             if member_name is None:
                 return None
+            # Zip metadata's declared uncompressed size is attacker-
+            # controlled and not verified against the real decompressed
+            # length until it's actually read -- checked here, before
+            # ever opening the member, for exactly the same reason a
+            # tiny multi-gigabyte-uncompressed zip ("zip bomb") is a well
+            # known attack: a small compressed size is not evidence of a
+            # small amount of work to decompress it.
+            if zf.getinfo(member_name).file_size > MAX_PICKLE_STREAM_BYTES:
+                return _stream_too_large_analysis()
             with zf.open(member_name) as f:
                 return _analyze_stream(f)
-    except (OSError, zipfile.BadZipFile):
+    except (OSError, zipfile.BadZipFile, MemoryError):
         return None

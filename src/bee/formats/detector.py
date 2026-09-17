@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from bee.evidence.finding import Confidence
+from bee.formats.io_source import Source
 from bee.formats.signatures import DETECTORS, DetectionResult
 
 _EXTENSION_MAP = {
@@ -29,9 +30,9 @@ def declared_format_from_extension(path: Path) -> str:
     return _EXTENSION_MAP.get(path.suffix.lower(), "unknown")
 
 
-def detect_format(path: Path) -> DetectionResult:
+def detect_format(source: Source) -> DetectionResult:
     for detector in DETECTORS:
-        result = detector(path)
+        result = detector(source)
         if result is not None:
             return result
     return ("unknown", Confidence.UNKNOWN, [])

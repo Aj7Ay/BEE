@@ -106,7 +106,7 @@ def _format_problems(problems: list[str]) -> str:
     return "; ".join(shown) + remainder
 
 
-def check_safetensors_bounds(artifact: Artifact) -> Finding | None:
+def check_safetensors_bounds(artifact: Artifact, content: bytes | None = None) -> Finding | None:
     """A file can be structurally recognizable as SafeTensors (a valid
     8-byte length prefix followed by valid JSON) while its header still
     lies about where each tensor's bytes actually are -- a range that
@@ -114,10 +114,14 @@ def check_safetensors_bounds(artifact: Artifact) -> Finding | None:
     bytes, or a declared shape/dtype that doesn't match the byte range
     backing it. None of that is checked by format detection, which only
     confirms the container is well-formed enough to identify.
+
+    `content`, when provided, is this same artifact's already-buffered
+    bytes (see Artifact.from_file / bee.formats.io_source), analyzed
+    directly instead of re-opening artifact.path.
     """
     if artifact.detected_format != "safetensors":
         return None
-    analysis = analyze_safetensors(Path(artifact.path))
+    analysis = analyze_safetensors(content if content is not None else Path(artifact.path))
     if analysis is None:
         return None
 
@@ -174,7 +178,7 @@ def check_safetensors_bounds(artifact: Artifact) -> Finding | None:
     )
 
 
-def check_safetensors_gap(artifact: Artifact) -> Finding | None:
+def check_safetensors_gap(artifact: Artifact, content: bytes | None = None) -> Finding | None:
     """Bytes in a SafeTensors file's data region that no tensor's
     data_offsets range covers. Not caught by the bounds check above: each
     individual range can be perfectly valid and non-overlapping while
@@ -192,7 +196,7 @@ def check_safetensors_gap(artifact: Artifact) -> Finding | None:
     """
     if artifact.detected_format != "safetensors":
         return None
-    analysis = analyze_safetensors(Path(artifact.path))
+    analysis = analyze_safetensors(content if content is not None else Path(artifact.path))
     if analysis is None or not analysis.tensors:
         return None
     if len(analysis.tensors) > _MAX_TENSORS_CHECKED:

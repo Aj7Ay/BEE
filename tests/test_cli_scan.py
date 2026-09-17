@@ -63,14 +63,14 @@ def test_scan_continues_after_unreadable_file(tmp_path, monkeypatch):
     builders.write_gguf(target / "good.gguf")
     (target / "broken.bin").write_bytes(b"data")
 
-    real_from_file = Artifact.from_file.__func__
+    real_from_file_with_content = Artifact.from_file_with_content.__func__
 
     def _maybe_raise(cls, path):
         if path.name == "broken.bin":
             raise OSError("Permission denied")
-        return real_from_file(cls, path)
+        return real_from_file_with_content(cls, path)
 
-    monkeypatch.setattr(Artifact, "from_file", classmethod(_maybe_raise))
+    monkeypatch.setattr(Artifact, "from_file_with_content", classmethod(_maybe_raise))
 
     result = runner.invoke(app, ["--format", "json", "scan", str(target)])
 

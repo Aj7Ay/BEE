@@ -116,16 +116,23 @@ evading a naive "last two strings" tracker:
   This is the common case for a real checkpoint from custom code, which
   is exactly why it's LOW and not MEDIUM — a finding that fires on nearly
   every real model gets muted, taking the genuine `os.*` case down with it
-- **`BEE-PKL-003` (high)** — the opcode stream exceeds BEE's 100,000-opcode
-  analysis limit without ever reaching `STOP`. Analysis is bounded by
-  opcode count (not a byte-offset prefix) specifically so padding can't
-  push a payload out of a fixed sniff window — but the cap itself was, for
-  one release, a second way to do the same thing: pad past 100,000 trivial
-  opcodes and a dangerous primitive placed after the cutoff was never
-  reached, and the file reported as `unknown` with zero findings. No real
-  checkpoint's pickle stream needs anywhere near that many opcodes, so
-  hitting the cap now fails closed — reported as suspicious — instead of
-  falling through to a clean, unanalyzed "unknown"
+- **`BEE-PKL-003` (high)** — analysis was cut short before ever reaching
+  `STOP`, for either of two reasons. (1) The opcode stream exceeds BEE's
+  100,000-opcode limit: analysis is bounded by opcode *count*, not a
+  byte-offset prefix, specifically so padding can't push a payload out of
+  a fixed sniff window — but the cap itself was, for one release, a
+  second way to do the same thing (pad past 100,000 trivial opcodes and
+  a dangerous primitive placed after the cutoff was never reached,
+  reported as `unknown` with zero findings). (2) The stream itself
+  exceeds 64MB: a single opcode can legitimately claim a huge amount of
+  *real* data (a multi-gigabyte `BINBYTES` blob backed by actual bytes,
+  not just a declared length) and still count as one opcode toward the
+  count cap — bounding the whole stream's size closes that regardless of
+  which opcode would have tried to claim it. No real `data.pkl` (a real
+  checkpoint's tensor bytes live in separate zip members, never the
+  pickle stream itself) needs anywhere near either limit, so hitting
+  either now fails closed — reported as suspicious — instead of falling
+  through to a clean, unanalyzed "unknown"
 
 ```
 $ bee scan ./models
@@ -268,6 +275,21 @@ matching hash after editing it. A clean `bee verify` on an *unsigned*
 run means the record is internally self-consistent; it isn't a
 cryptographic guarantee that no one who understands this format has
 touched it. `bee sign` is what closes that gap — see below.
+
+**What the recorded hash is guaranteed to match:** hashing, format
+detection, and deep analysis (pickle opcodes, SafeTensors/GGUF headers)
+used to each independently re-open the scanned path — meaning a file
+replaced on disk mid-scan could make the hash BEE recorded and the
+content it actually analyzed for danger two different files. For any
+file at or under 64MB, BEE now reads it into memory exactly once and
+reuses that same buffer for every stage, closing that window entirely
+regardless of what happens to the path afterwards. A file larger than
+that still uses the previous per-stage re-open behavior — buffering a
+multi-gigabyte checkpoint just to close a race window would trade one
+resource-exhaustion problem for another, so the bound is deliberate,
+not an oversight. Closing it above that size would require staying on
+one open file descriptor for the artifact's entire processing window,
+which is a larger structural change than this release makes.
 
 ## Signing
 

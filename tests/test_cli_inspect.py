@@ -54,7 +54,7 @@ def test_inspect_reports_unreadable_file_without_crashing(tmp_path, monkeypatch)
     def _raise(cls, path):
         raise OSError("Permission denied")
 
-    monkeypatch.setattr(Artifact, "from_file", classmethod(_raise))
+    monkeypatch.setattr(Artifact, "from_file_with_content", classmethod(_raise))
 
     result = runner.invoke(app, ["inspect", str(file_path)])
 

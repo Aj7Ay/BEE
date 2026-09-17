@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import struct
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import IO, Any
+
+from bee.formats.io_source import Source, open_source, size_of
 
 GGUF_MAGIC = b"GGUF"
 GGUF_DEFAULT_ALIGNMENT = 32
@@ -182,17 +183,23 @@ def _read_kv_value(f: IO[bytes], vtype: int, file_size: int) -> Any:
     return _read_scalar(f, vtype, file_size)
 
 
-def analyze_gguf(path: Path) -> GgufAnalysis | None:
+def analyze_gguf(source: Source) -> GgufAnalysis | None:
     """Parse a GGUF file's header, metadata key/value section, and tensor
     info table -- never the tensor data itself. Every declared count and
     length is bounded against the same limits llama.cpp's own reference
     reader enforces (see GGUF_MAX_ARRAY_ELEMENTS/GGUF_MAX_STRING_LENGTH
     above), so a malicious or corrupted header can't make this allocate
     or loop unboundedly just because it says to.
+
+    `source` is either a Path (opened and read here) or the file's
+    already-read bytes (see bee.formats.io_source) -- the latter used
+    when Artifact.from_file already buffered this file once for hashing,
+    so this doesn't independently re-open and potentially see different
+    content if the file changed in between.
     """
     try:
-        file_size = path.stat().st_size
-        with path.open("rb") as f:
+        file_size = size_of(source)
+        with open_source(source) as f:
             magic = _read_exact(f, 4)
             if magic != GGUF_MAGIC:
                 return None

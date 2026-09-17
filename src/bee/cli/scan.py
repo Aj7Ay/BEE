@@ -82,7 +82,7 @@ def scan_command(
                 continue
 
         try:
-            artifact = Artifact.from_file(file_path)
+            artifact, content = Artifact.from_file_with_content(file_path)
         except OSError as exc:
             # A file we can't read (permissions, race with deletion, a
             # dangling special file, ...) must not kill the rest of the
@@ -109,16 +109,16 @@ def scan_command(
         finding = check_mismatch(artifact)
         if finding is not None:
             findings.append(finding)
-        pickle_finding = check_pickle_calls(artifact)
+        pickle_finding = check_pickle_calls(artifact, content)
         if pickle_finding is not None:
             findings.append(pickle_finding)
-        bounds_finding = check_safetensors_bounds(artifact)
+        bounds_finding = check_safetensors_bounds(artifact, content)
         if bounds_finding is not None:
             findings.append(bounds_finding)
-        gap_finding = check_safetensors_gap(artifact)
+        gap_finding = check_safetensors_gap(artifact, content)
         if gap_finding is not None:
             findings.append(gap_finding)
-        gguf_finding = check_gguf_bounds(artifact)
+        gguf_finding = check_gguf_bounds(artifact, content)
         if gguf_finding is not None:
             findings.append(gguf_finding)
 

@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from bee.evidence.finding import Confidence, Evidence
 from bee.formats.detector import declared_format_from_extension, detect_format
+from bee.formats.io_source import TOCTOU_SAFE_MAX_BYTES
 
 _HASH_CHUNK_SIZE = 1_048_576
 _MAGIC_BYTES_LENGTH = 16
@@ -20,6 +21,10 @@ def compute_file_hashes(path: Path) -> tuple[str, str]:
             sha256.update(chunk)
             sha512.update(chunk)
     return sha256.hexdigest(), sha512.hexdigest()
+
+
+def _hash_bytes(data: bytes) -> tuple[str, str]:
+    return hashlib.sha256(data).hexdigest(), hashlib.sha512(data).hexdigest()
 
 
 def read_magic_bytes_hex(path: Path, length: int = _MAGIC_BYTES_LENGTH) -> str:
@@ -60,10 +65,42 @@ class Artifact(BaseModel):
 
     @classmethod
     def from_file(cls, path: Path) -> "Artifact":
+        artifact, _content = cls.from_file_with_content(path)
+        return artifact
+
+    @classmethod
+    def from_file_with_content(cls, path: Path) -> tuple["Artifact", bytes | None]:
+        """Like `from_file`, but also returns the file's exact bytes as
+        they stood at read time, when the file is small enough to buffer
+        safely (see TOCTOU_SAFE_MAX_BYTES) -- `None` otherwise.
+
+        A caller that goes on to run deep analysis (check_pickle_calls,
+        check_safetensors_bounds, check_gguf_bounds, ...) on this same
+        artifact should pass that buffer through to them instead of
+        letting each one separately re-open `path`: hashing, format
+        detection, and deep analysis would otherwise each independently
+        re-read the file, and a file replaced on disk between those reads
+        could make the hash BEE records and the content BEE actually
+        analyzed for danger diverge -- a signed, verified record
+        attesting to bytes that were never the ones actually vetted. For
+        a file too large to buffer, this still returns a correct Artifact;
+        it just can't close that window, the same way it couldn't before
+        this method existed.
+        """
         size = path.stat().st_size
-        sha256, sha512 = compute_file_hashes(path)
+        content: bytes | None = None
+        if size <= TOCTOU_SAFE_MAX_BYTES:
+            content = path.read_bytes()
+            # Reflects the bytes actually read, not the earlier stat()
+            # call -- the two can differ if the file changed in between,
+            # and what was hashed is what this record should describe.
+            size = len(content)
+            sha256, sha512 = _hash_bytes(content)
+            detected_format, format_confidence, format_evidence = detect_format(content)
+        else:
+            sha256, sha512 = compute_file_hashes(path)
+            detected_format, format_confidence, format_evidence = detect_format(path)
         declared_format = declared_format_from_extension(path)
-        detected_format, format_confidence, format_evidence = detect_format(path)
         # Derived from the matching detector's own evidence -- see
         # _magic_bytes_from_evidence -- rather than a separate blind read.
         # This is what actually fixes both the general case (nothing is
@@ -76,7 +113,7 @@ class Artifact(BaseModel):
         # resolve(strict=False) so a broken symlink still records where it
         # points, instead of raising.
         symlink_target = str(path.resolve(strict=False)) if is_symlink else None
-        return cls(
+        artifact = cls(
             path=str(path),
             size=size,
             sha256=sha256,
@@ -88,6 +125,7 @@ class Artifact(BaseModel):
             is_symlink=is_symlink,
             symlink_target=symlink_target,
         )
+        return artifact, content
 
     @classmethod
     def unresolved_symlink(cls, path: Path, symlink_target: str) -> "Artifact":

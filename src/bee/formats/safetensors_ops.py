@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 import struct
 from dataclasses import dataclass, field
-from pathlib import Path
+
+from bee.formats.io_source import Source, open_source, size_of
 
 # Byte size per element for SafeTensors' documented dtype strings.
 # https://github.com/huggingface/safetensors -- this is the complete set
@@ -32,21 +33,24 @@ class SafetensorsAnalysis:
     tensors: list[TensorRange] = field(default_factory=list)
 
 
-def analyze_safetensors(path: Path) -> SafetensorsAnalysis | None:
+def analyze_safetensors(source: Source) -> SafetensorsAnalysis | None:
     """Parse a SafeTensors header into its declared tensor byte ranges,
     without trusting any of them yet -- that's check_safetensors_bounds'
     job. Deliberately permissive about field types here (a `start` that
     isn't an int, a `shape` that isn't a list) rather than rejecting the
     file outright; a malformed field is exactly what the bounds check
     exists to report, not something to silently swallow by bailing early.
+
+    `source` is either a Path (opened and read here) or the file's
+    already-read bytes (see bee.formats.io_source).
     """
     try:
-        with path.open("rb") as f:
+        with open_source(source) as f:
             header_len_bytes = f.read(8)
             if len(header_len_bytes) < 8:
                 return None
             (header_len,) = struct.unpack("<Q", header_len_bytes)
-            file_size = path.stat().st_size
+            file_size = size_of(source)
             if header_len <= 0 or header_len > file_size - 8:
                 return None
             header_bytes = f.read(header_len)
