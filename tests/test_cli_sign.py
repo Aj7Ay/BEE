@@ -138,3 +138,125 @@ def test_unsigned_run_still_uses_plain_hash_fallback(tmp_path, monkeypatch):
 
     assert payload["signed"] is False
     assert payload["evidence_ok"] is True
+
+
+# ---------------------------------------------------------------------------
+# --signer / --pubkey pinning: without a pin, "VALID" only means "signed
+# by *some* key embedded in the record" -- an attacker can re-sign under
+# their own key. These tests exercise that exact attack and confirm
+# pinning closes it.
+# ---------------------------------------------------------------------------
+
+
+def test_unpinned_verify_accepts_a_key_substitution_attack(tmp_path, monkeypatch):
+    # The attack the pin exists to stop: attacker downgrades a critical
+    # finding, then re-signs the forged record under their OWN key
+    # (generated fresh, not the original signer's). An unpinned verify
+    # has no way to tell -- and correctly says so, since it never claimed
+    # to check *whose* key.
+    monkeypatch.chdir(tmp_path)
+    owner_keys = tmp_path / "owner-keys"
+    runner.invoke(app, ["keygen", "--key-dir", str(owner_keys)])
+
+    file_path = tmp_path / "model.pt"
+    builders.write_safetensors(file_path)  # real finding: BEE-FMT-001
+    run_id = _run_id_from_scan(str(file_path))
+    runner.invoke(app, ["sign", run_id, "--key", str(owner_keys / "bee_ed25519")])
+
+    original = json.loads(runner.invoke(app, ["--format", "json", "verify", run_id]).output)
+    original_signer = original["signer_fingerprint"]
+
+    # Attacker: own keypair, own database write access.
+    attacker_keys = tmp_path / "attacker-keys"
+    runner.invoke(app, ["keygen", "--key-dir", str(attacker_keys)])
+
+    from bee.core.run import compute_evidence_hash
+    from bee.core.signing import load_private_key, sign_hash
+    from bee.storage.db import load_run, save_run
+
+    db_path = tmp_path / ".bee" / "bee.db"
+    run = load_run(db_path, run_id)
+    run.findings = []
+    run.summary.findings_by_severity = {k: 0 for k in run.summary.findings_by_severity}
+    forged_hash = compute_evidence_hash(run.target_path, run.artifacts, run.findings, run.scanner_version)
+    attacker_private_key = load_private_key(attacker_keys / "bee_ed25519")
+    signature_hex, public_key_hex = sign_hash(attacker_private_key, forged_hash)
+    run.evidence_sha256 = forged_hash
+    run.signature = signature_hex
+    run.public_key = public_key_hex
+    save_run(db_path, run)
+
+    result = runner.invoke(app, ["--format", "json", "verify", run_id])
+    payload = json.loads(result.output)
+
+    # Unpinned: the forged-and-re-signed record is internally consistent,
+    # so verify correctly reports VALID -- it never checked the signer.
+    assert result.exit_code == 0
+    assert payload["signed"] is True
+    assert payload["evidence_ok"] is True
+    assert payload["signer_fingerprint"] != original_signer  # the tell, if anyone looks
+
+    # Pinned to the real owner's key: the substitution is caught.
+    pinned_result = runner.invoke(
+        app, ["--format", "json", "verify", run_id, "--signer", original_signer]
+    )
+    pinned_payload = json.loads(pinned_result.output)
+
+    assert pinned_result.exit_code == 1
+    assert pinned_payload["signer_matches"] is False
+    assert pinned_payload["ok"] is False
+
+
+def test_verify_signer_pin_accepts_the_correct_signer(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    key_dir = tmp_path / "keys"
+    runner.invoke(app, ["keygen", "--key-dir", str(key_dir)])
+
+    file_path = tmp_path / "model.gguf"
+    builders.write_gguf(file_path)
+    run_id = _run_id_from_scan(str(file_path))
+    runner.invoke(app, ["sign", run_id, "--key", str(key_dir / "bee_ed25519")])
+
+    fingerprint = json.loads(
+        runner.invoke(app, ["--format", "json", "verify", run_id]).output
+    )["signer_fingerprint"]
+
+    result = runner.invoke(app, ["--format", "json", "verify", run_id, "--signer", fingerprint])
+    payload = json.loads(result.output)
+
+    assert result.exit_code == 0
+    assert payload["signer_matches"] is True
+    assert payload["ok"] is True
+
+
+def test_verify_pubkey_pin_accepts_the_correct_key(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    key_dir = tmp_path / "keys"
+    runner.invoke(app, ["keygen", "--key-dir", str(key_dir)])
+
+    file_path = tmp_path / "model.gguf"
+    builders.write_gguf(file_path)
+    run_id = _run_id_from_scan(str(file_path))
+    runner.invoke(app, ["sign", run_id, "--key", str(key_dir / "bee_ed25519")])
+
+    result = runner.invoke(
+        app, ["--format", "json", "verify", run_id, "--pubkey", str(key_dir / "bee_ed25519.pub")]
+    )
+    payload = json.loads(result.output)
+
+    assert result.exit_code == 0
+    assert payload["signer_matches"] is True
+
+
+def test_verify_pin_rejects_an_unsigned_run(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    file_path = tmp_path / "model.gguf"
+    builders.write_gguf(file_path)
+    run_id = _run_id_from_scan(str(file_path))
+
+    result = runner.invoke(app, ["--format", "json", "verify", run_id, "--signer", "deadbeefdeadbeef"])
+    payload = json.loads(result.output)
+
+    assert result.exit_code == 1
+    assert payload["signed"] is False
+    assert payload["ok"] is False

@@ -241,6 +241,26 @@ The public key travels with the signature inside the record itself, so
 verifying never requires access to the signer's key files — only the
 record and the signature it already carries.
 
+**Pin an expected signer — this is the part that makes signing actually
+load-bearing.** Without a pin, `bee verify` only proves the record is
+signed by *some* key embedded in it: an attacker who forges content can
+just discard your signature and re-sign under a key of their own, and
+`bee verify` correctly reports `VALID` — it never claimed to check
+*whose* key. Pinning with `--signer <fingerprint>` or `--pubkey
+<path>` closes that:
+
+```
+$ bee verify <run-id> --signer a361824b3549aa8c
+Evidence record:  SIGNED BY UNEXPECTED KEY (got 5da0a589531a65a9, expected a361824b3549aa8c)
+```
+
+That's a real forge-and-re-sign attack caught: the same evidence-tampering
+forgery from above, but this time the attacker also generated their own
+keypair and signed the forged record with it. The signature is
+perfectly valid — under the wrong key. `--signer`/`--pubkey` is what a
+CI gate actually needs: not "this record is self-consistent," but
+"this record was vouched for by someone I trust."
+
 ## What BEE detects today
 
 Structural signatures for: SafeTensors, GGUF, NumPy, HDF5/Keras, Pickle
