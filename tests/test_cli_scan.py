@@ -5,8 +5,26 @@ from typer.testing import CliRunner
 from bee.cli.main import app
 from bee.core.artifact import Artifact
 from tests.fixtures import builders
+from tests.test_gguf import _GGML_TYPE_F32, _build_gguf
 
 runner = CliRunner()
+
+
+def test_scan_reports_gguf_bounds_finding_for_truncated_file(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / "models"
+    target.mkdir()
+    (target / "truncated.gguf").write_bytes(
+        _build_gguf(
+            tensors=[("weight", [4], _GGML_TYPE_F32, 0)],
+            tensor_data=b"\x00" * 4,  # declares 16 bytes, file only has 4
+        )
+    )
+
+    result = runner.invoke(app, ["scan", str(target)])
+
+    assert result.exit_code == 0
+    assert "BEE-GGUF-001" in result.output
 
 
 def test_scan_reports_mismatch_in_text_mode(tmp_path, monkeypatch):

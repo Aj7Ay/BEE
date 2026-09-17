@@ -5,6 +5,7 @@ from typer.testing import CliRunner
 from bee.cli.main import app
 from bee.core.artifact import Artifact
 from tests.fixtures import builders
+from tests.test_gguf import _GGML_TYPE_F32, _build_gguf
 
 runner = CliRunner()
 
@@ -193,3 +194,60 @@ def test_inspect_fail_on_rejects_invalid_severity(tmp_path, monkeypatch):
 
     assert result.exit_code != 0
     assert "must be one of" in result.output
+
+
+def test_inspect_text_output_shows_gguf_metadata(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    file_path = tmp_path / "model.gguf"
+    file_path.write_bytes(
+        _build_gguf(
+            tensors=[("weight", [4], _GGML_TYPE_F32, 0)],
+            kvs=[("general.architecture", "llama")],
+            tensor_data=b"\x00" * 16,
+        )
+    )
+
+    result = runner.invoke(app, ["inspect", str(file_path)])
+
+    assert result.exit_code == 0
+    assert "GGUF version:     3" in result.output
+    assert "GGUF tensors:     1" in result.output
+    assert "GGUF architecture: llama" in result.output
+    assert "Finding:          none" in result.output
+
+
+def test_inspect_json_output_includes_gguf_metadata(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    file_path = tmp_path / "model.gguf"
+    file_path.write_bytes(
+        _build_gguf(
+            tensors=[("weight", [4], _GGML_TYPE_F32, 0)],
+            kvs=[("general.architecture", "llama")],
+            tensor_data=b"\x00" * 16,
+        )
+    )
+
+    result = runner.invoke(app, ["--format", "json", "inspect", str(file_path)])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["gguf"]["version"] == 3
+    assert payload["gguf"]["tensor_count"] == 1
+    assert payload["gguf"]["architecture"] == "llama"
+    assert payload["findings"] == []
+
+
+def test_inspect_reports_gguf_bounds_finding_for_truncated_file(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    file_path = tmp_path / "truncated.gguf"
+    file_path.write_bytes(
+        _build_gguf(
+            tensors=[("weight", [4], _GGML_TYPE_F32, 0)],
+            tensor_data=b"\x00" * 4,  # declares 16 bytes, file only has 4
+        )
+    )
+
+    result = runner.invoke(app, ["inspect", str(file_path)])
+
+    assert result.exit_code == 0
+    assert "BEE-GGUF-001" in result.output

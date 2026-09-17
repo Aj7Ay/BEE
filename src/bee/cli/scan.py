@@ -10,6 +10,7 @@ from bee.cli.state import OutputFormat
 from bee.core.artifact import Artifact
 from bee.core.run import Run
 from bee.evidence.finding import Confidence, Evidence, Finding, Severity
+from bee.evidence.gguf_bounds import check_gguf_bounds
 from bee.evidence.mismatch import check_mismatch
 from bee.evidence.pickle_calls import check_pickle_calls
 from bee.evidence.safetensors_bounds import check_safetensors_bounds, check_safetensors_gap
@@ -117,6 +118,9 @@ def scan_command(
         gap_finding = check_safetensors_gap(artifact)
         if gap_finding is not None:
             findings.append(gap_finding)
+        gguf_finding = check_gguf_bounds(artifact)
+        if gguf_finding is not None:
+            findings.append(gguf_finding)
 
     run = Run.from_scan(
         target_path=str(path), artifacts=artifacts, findings=findings, deterministic=deterministic

@@ -12,10 +12,10 @@ structural format (never trusting the file extension), and flagging
 mismatches between the two.
 
 This is early. Beyond what's below (format-mismatch detection, pickle
-call-graph analysis, SafeTensors bounds checking), deeper static
-security analysis (GGUF metadata inspection and more), provenance,
-supply-chain checks, licensing, and policy enforcement are planned in
-later releases.
+call-graph analysis, SafeTensors bounds checking, GGUF metadata
+inspection, evidence integrity and signing), provenance, supply-chain
+checks, licensing, and policy enforcement are planned in later
+releases.
 
 ## Install
 
@@ -176,6 +176,48 @@ Finding:          BEE-STS-001 [high] SafeTensors header declares invalid or over
 with one tensor's `data_offsets` end pushed 10MB past the actual file —
 the header still parses as valid JSON, so format detection alone would
 call this a clean safetensors file.)
+
+## GGUF metadata inspection
+
+`bee inspect` parses a GGUF file's header, metadata key/value section,
+and tensor info table — never the tensor data itself — and surfaces the
+architecture, tensor count, and metadata count alongside the usual
+identity fields:
+
+```
+$ bee inspect tinyllama.gguf
+Detected format:  gguf (verified)
+GGUF version:     3
+GGUF tensors:     201
+GGUF metadata kv: 23
+GGUF architecture: llama
+Finding:          none
+```
+
+`BEE-GGUF-001` (high) cross-checks every tensor's declared offset and
+shape/type against the file: an offset that isn't a multiple of the
+file's own declared alignment, one that starts past the end of the
+file, or a declared shape whose byte size runs off the end of it.
+Tensor byte sizes are computed exactly for every GGML quantization
+format (F32 down through the K-quants and beyond), not just plain
+float/int types. The single most common real-world trigger is an
+incomplete download, not an attack — but a naive loader would still
+read past the file's own end either way:
+
+```
+$ bee inspect small.gguf --fail-on high
+Detected format:  gguf (verified)
+GGUF version:     3
+GGUF tensors:     201
+GGUF metadata kv: 21
+GGUF architecture: llama
+Finding:          BEE-GGUF-001 [high] GGUF tensor table declares invalid or out-of-bounds data
+```
+
+(`small.gguf` here is a real TinyLlama Q2_K checkpoint that was cut off
+mid-download at 310,558,210 of its actual 483,116,416 bytes — the magic
+bytes, header, and metadata are all intact, so format detection alone
+would call this a valid GGUF file.)
 
 ## Evidence integrity and re-verification
 

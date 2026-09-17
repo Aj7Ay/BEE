@@ -9,10 +9,12 @@ from bee.cli.severity import FAIL_ON_HELP, exit_if_threshold_met, parse_severity
 from bee.cli.state import OutputFormat
 from bee.core.artifact import Artifact
 from bee.evidence.finding import Finding
+from bee.evidence.gguf_bounds import check_gguf_bounds
 from bee.evidence.mismatch import check_mismatch
 from bee.evidence.pickle_calls import check_pickle_calls
 from bee.evidence.safetensors_bounds import check_safetensors_bounds, check_safetensors_gap
 from bee.evidence.symlink import build_symlink_escape_finding, is_escaping_symlink
+from bee.formats.gguf_ops import analyze_gguf
 
 
 def inspect_command(
@@ -69,17 +71,39 @@ def inspect_command(
     gap_finding = check_safetensors_gap(artifact)
     if gap_finding is not None:
         findings.append(gap_finding)
+    gguf_finding = check_gguf_bounds(artifact)
+    if gguf_finding is not None:
+        findings.append(gguf_finding)
 
     _print_inspection(state, artifact, findings)
     exit_if_threshold_met(findings, threshold)
 
 
+def _gguf_summary(artifact: Artifact) -> dict | None:
+    if artifact.detected_format != "gguf":
+        return None
+    analysis = analyze_gguf(Path(artifact.path))
+    if analysis is None:
+        return None
+    architecture = analysis.metadata.get("general.architecture")
+    return {
+        "version": analysis.version,
+        "tensor_count": analysis.tensor_count,
+        "metadata_kv_count": analysis.metadata_kv_count,
+        "architecture": architecture,
+    }
+
+
 def _print_inspection(state, artifact: Artifact, findings: list[Finding]) -> None:
+    gguf_info = _gguf_summary(artifact)
+
     if state.output_format is OutputFormat.JSON:
         payload = {
             "artifact": artifact.model_dump(mode="json"),
             "findings": [f.model_dump(mode="json") for f in findings],
         }
+        if gguf_info is not None:
+            payload["gguf"] = gguf_info
         typer.echo(jsonlib.dumps(payload, indent=2))
         return
 
@@ -92,6 +116,12 @@ def _print_inspection(state, artifact: Artifact, findings: list[Finding]) -> Non
     typer.echo(f"Magic bytes:      {artifact.magic_bytes_hex}")
     if artifact.is_symlink:
         typer.echo(f"Symlink:          True -> {artifact.symlink_target}")
+    if gguf_info is not None:
+        typer.echo(f"GGUF version:     {gguf_info['version']}")
+        typer.echo(f"GGUF tensors:     {gguf_info['tensor_count']}")
+        typer.echo(f"GGUF metadata kv: {gguf_info['metadata_kv_count']}")
+        if gguf_info["architecture"] is not None:
+            typer.echo(f"GGUF architecture: {gguf_info['architecture']}")
     if findings:
         for finding in findings:
             typer.echo(f"Finding:          {finding.id} [{finding.severity.value}] {finding.title}")

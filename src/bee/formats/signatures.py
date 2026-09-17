@@ -33,6 +33,13 @@ def detect_safetensors(path: Path) -> DetectionResult | None:
 
 
 def detect_gguf(path: Path) -> DetectionResult | None:
+    # Deliberately a shallow magic-only check, not upgraded to require a
+    # full bee.formats.gguf_ops.analyze_gguf() parse the way safetensors
+    # requires a full header parse: "GGUF" is a 4-byte literal match with
+    # essentially no collision risk, unlike safetensors' numeric-header
+    # heuristic, which does need the deeper validation to mean anything.
+    # Structural validation (and the findings it can produce) lives in
+    # bee.evidence.gguf_bounds, independent of classification here.
     prefix = _read_prefix(path, 4)
     if prefix != b"GGUF":
         return None
