@@ -1,4 +1,5 @@
 import struct
+import time
 
 from bee.core.artifact import Artifact
 from bee.evidence.gguf_bounds import check_gguf_bounds
@@ -6,6 +7,8 @@ from bee.formats.gguf_ops import analyze_gguf, compute_tensor_byte_size
 from tests.fixtures import builders
 
 _STRING = 8
+_ARRAY = 9
+_UINT8 = 0
 _UINT32 = 4
 
 _GGML_TYPE_F32 = 0  # 1 element/block, 4 bytes/block -- plain float32
@@ -30,9 +33,20 @@ def _pack_tensor_info(name: str, dims: list[int], ggml_type: int, offset: int) -
     )
 
 
+def _pack_nested_array_kv(key: str, depth: int) -> bytes:
+    """A metadata KV whose value is `depth` levels of array-of-array,
+    terminated by an empty UINT8 array -- byte-accurate input for
+    exercising _skip_array_elements' recursion, not a simplified
+    stand-in for a real nested array."""
+    value = b"".join(struct.pack("<I", _ARRAY) + struct.pack("<Q", 1) for _ in range(depth))
+    value += struct.pack("<I", _UINT8) + struct.pack("<Q", 0)
+    return _pack_string(key) + struct.pack("<I", _ARRAY) + value
+
+
 def _build_gguf(
     tensors: list[tuple[str, list[int], int, int]],
     kvs: list[tuple[str, str]] | None = None,
+    raw_kvs: list[bytes] | None = None,
     version: int = 3,
     alignment: int = 32,
     tensor_data: bytes | None = None,
@@ -40,16 +54,19 @@ def _build_gguf(
     """Assemble a real, byte-accurate GGUF file: header, metadata KV
     section, tensor info table, alignment padding, then tensor data --
     matching bee.formats.gguf_ops.analyze_gguf's own layout expectations,
-    not a simplified stand-in for them."""
+    not a simplified stand-in for them. `raw_kvs` carries pre-packed KV
+    bytes (e.g. from _pack_nested_array_kv) alongside the plain string
+    KVs in `kvs`."""
     kvs = kvs or []
-    kv_section = b"".join(_pack_string_kv(k, v) for k, v in kvs)
+    raw_kvs = raw_kvs or []
+    kv_section = b"".join(_pack_string_kv(k, v) for k, v in kvs) + b"".join(raw_kvs)
     tensor_section = b"".join(_pack_tensor_info(*t) for t in tensors)
 
     header = (
         b"GGUF"
         + struct.pack("<I", version)
         + struct.pack("<Q", len(tensors))
-        + struct.pack("<Q", len(kvs))
+        + struct.pack("<Q", len(kvs) + len(raw_kvs))
         + kv_section
         + tensor_section
     )
@@ -172,6 +189,67 @@ def test_none_for_unresolved_symlink(tmp_path):
     link = tmp_path / "link.gguf"
     artifact = Artifact.unresolved_symlink(link, "/somewhere/outside.gguf")
     assert check_gguf_bounds(artifact) is None
+
+
+def test_deeply_nested_metadata_array_does_not_crash(tmp_path):
+    # A metadata array nested past Python's recursion limit used to raise
+    # an uncaught RecursionError out of analyze_gguf and crash the whole
+    # scan -- the exact "one dimension bounded, another one missed"
+    # failure this codebase has hit before with other formats. The
+    # nesting depth cap (and the RecursionError backstop) must turn this
+    # into a clean "unparseable", not a crash, however deep it goes.
+    path = tmp_path / "recursion_bomb.gguf"
+    path.write_bytes(
+        _build_gguf(
+            tensors=[],
+            raw_kvs=[_pack_nested_array_kv("evil", depth=5000)],
+        )
+    )
+
+    start = time.monotonic()
+    analysis = analyze_gguf(path)
+    elapsed = time.monotonic() - start
+
+    assert analysis is None  # rejected as unparseable, not crashed
+    assert elapsed < 2.0
+
+    # Also drive it through the finding path end-to-end, same as a real scan would.
+    artifact = _artifact_for(path)
+    assert artifact.detected_format == "gguf"  # shallow magic-only detection still applies
+    assert check_gguf_bounds(artifact) is None
+
+
+def test_array_nesting_just_under_cap_still_parses(tmp_path):
+    from bee.formats.gguf_ops import _MAX_ARRAY_NESTING_DEPTH
+
+    path = tmp_path / "shallow_nesting.gguf"
+    path.write_bytes(
+        _build_gguf(
+            tensors=[],
+            raw_kvs=[_pack_nested_array_kv("fine", depth=_MAX_ARRAY_NESTING_DEPTH - 5)],
+        )
+    )
+    analysis = analyze_gguf(path)
+    assert analysis is not None
+    assert analysis.metadata["fine"] == {"__array__": True, "element_type": _ARRAY, "length": 1}
+
+
+def test_oversized_string_length_rejected_without_large_allocation(tmp_path):
+    # A KV declaring a string length far larger than the file itself
+    # (but still under GGUF_MAX_STRING_LENGTH) must be rejected before
+    # attempting to read/allocate that many bytes -- not just fail once
+    # the short read comes up short.
+    key = _pack_string("model.name")
+    oversized_value = struct.pack("<I", _STRING) + struct.pack("<Q", 500_000_000)
+    path = tmp_path / "oversized_string.gguf"
+    path.write_bytes(_build_gguf(tensors=[], raw_kvs=[key + oversized_value]))
+
+    start = time.monotonic()
+    analysis = analyze_gguf(path)
+    elapsed = time.monotonic() - start
+
+    assert analysis is None
+    assert elapsed < 1.0
 
 
 def test_none_for_minimal_synthetic_fixture(tmp_path):
