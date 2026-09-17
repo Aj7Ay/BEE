@@ -126,6 +126,48 @@ def test_detect_pickle_survives_multi_megabyte_padding_after_stop(tmp_path):
     assert confidence == Confidence.SUPPORTED
 
 
+def _short_binunicode(s: str) -> bytes:
+    b = s.encode("utf-8")
+    return b"\x8c" + bytes([len(b)]) + b
+
+
+def _build_padded_rce(command: str, padding_opcodes: int) -> bytes:
+    """PROTO 4, then `padding_opcodes` EMPTY_DICT+MEMOIZE pairs (2 opcodes
+    each, trivially generated), then a real os.system(command) RCE at the
+    end. A real, working payload -- not a synthetic stand-in -- built so
+    the RCE only becomes reachable after crossing MAX_PICKLE_OPCODES."""
+    padding = b"}\x94" * padding_opcodes  # EMPTY_DICT, MEMOIZE
+    tail = (
+        _short_binunicode("os") + b"\x94"
+        + _short_binunicode("system") + b"\x94"
+        + b"\x93"  # STACK_GLOBAL
+        + _short_binunicode(command) + b"\x94"
+        + b"\x85"  # TUPLE1
+        + b"R"  # REDUCE
+        + b"."  # STOP
+    )
+    return b"\x80\x04" + padding + tail
+
+
+def test_detect_pickle_flags_opcode_cap_hit_as_pickle_not_unknown(tmp_path):
+    # The regression this guards against: a pickle padded with enough
+    # trivial opcodes to exceed MAX_PICKLE_OPCODES before ever reaching
+    # STOP used to make detect_pickle return None -- "not a pickle" --
+    # letting a real os.system RCE placed after the padding evade
+    # detection entirely (detected_format == "unknown", zero findings).
+    # Hitting the cap must still classify as pickle, just at lower
+    # confidence, not fall through to unknown.
+    from bee.formats.pickle_ops import MAX_PICKLE_OPCODES
+
+    payload = _build_padded_rce("id", padding_opcodes=MAX_PICKLE_OPCODES + 5_000)
+    path = tmp_path / "evil.safetensors"
+    path.write_bytes(payload)
+
+    fmt, confidence, _ = detect_format(path)
+    assert fmt == "pickle"
+    assert confidence == Confidence.INFERRED
+
+
 def test_detect_pickle_with_stop_beyond_one_megabyte(tmp_path):
     # The more realistic version of the same bug: STOP occurring past 1 MiB
     # not because of external padding, but because the pickle's own payload

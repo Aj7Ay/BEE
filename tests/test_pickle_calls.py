@@ -1,8 +1,14 @@
 import pickle
+import zipfile
 
 from bee.core.artifact import Artifact
 from bee.evidence.pickle_calls import check_pickle_calls
-from bee.formats.pickle_ops import UNRESOLVED_STACK_GLOBAL, analyze_pickle_file, analyze_pytorch_zip_pickle
+from bee.formats.pickle_ops import (
+    MAX_PICKLE_OPCODES,
+    UNRESOLVED_STACK_GLOBAL,
+    analyze_pickle_file,
+    analyze_pytorch_zip_pickle,
+)
 from tests.fixtures import builders
 
 
@@ -353,6 +359,103 @@ def test_check_pickle_calls_flags_dangerous_global_in_pytorch_zip(tmp_path):
     assert finding is not None
     assert finding.id == "BEE-PKL-001"
     assert finding.severity.value == "critical"
+
+
+def _build_padded_rce(command: str, padding_opcodes: int) -> bytes:
+    """PROTO 4, then `padding_opcodes` EMPTY_DICT+MEMOIZE pairs (2 opcodes
+    each, trivially generated), then a real os.system(command) RCE at the
+    end -- a working payload deferred past however many opcodes precede
+    it, not a synthetic stand-in for one."""
+    padding = b"}\x94" * padding_opcodes  # EMPTY_DICT, MEMOIZE
+    tail = (
+        _short_binunicode("os") + b"\x94"
+        + _short_binunicode("system") + b"\x94"
+        + b"\x93"  # STACK_GLOBAL
+        + _short_binunicode(command) + b"\x94"
+        + b"\x85"  # TUPLE1
+        + b"R"  # REDUCE
+        + b"."  # STOP
+    )
+    return b"\x80\x04" + padding + tail
+
+
+def test_check_pickle_calls_flags_opcode_cap_hit_as_high_not_silent(tmp_path):
+    # The headline regression: an os.system RCE placed past
+    # MAX_PICKLE_OPCODES of padding used to make analyze_pickle_file
+    # return None (mistaken for "not a pickle"), so check_pickle_calls
+    # also returned None -- a working RCE with zero findings. Hitting the
+    # cap must produce a finding, not silence.
+    path = tmp_path / "evil.pkl"
+    path.write_bytes(_build_padded_rce("id", padding_opcodes=MAX_PICKLE_OPCODES + 5_000))
+
+    artifact = _artifact_for(path)
+    assert artifact.detected_format == "pickle"
+    finding = check_pickle_calls(artifact)
+
+    assert finding is not None
+    assert finding.id == "BEE-PKL-003"
+    assert finding.severity.value == "high"
+
+
+def test_check_pickle_calls_flags_opcode_cap_hit_in_pytorch_zip(tmp_path):
+    path = tmp_path / "evil.pt"
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("archive/data.pkl", _build_padded_rce("id", padding_opcodes=MAX_PICKLE_OPCODES + 5_000))
+        zf.writestr("archive/version", "3")
+
+    artifact = _artifact_for(path)
+    assert artifact.detected_format == "pytorch"
+    finding = check_pickle_calls(artifact)
+
+    assert finding is not None
+    assert finding.id == "BEE-PKL-003"
+    assert finding.severity.value == "high"
+
+
+def test_check_pickle_calls_prioritizes_dangerous_global_over_cap_hit(tmp_path):
+    # A dangerous global visible before the cap is hit is strictly better
+    # information than "we couldn't finish looking" -- BEE-PKL-001 must
+    # still win even if the same stream also happens to hit the cap later.
+    path = tmp_path / "evil.pkl"
+    early_rce = (
+        _short_binunicode("os") + b"\x94"
+        + _short_binunicode("system") + b"\x94"
+        + b"\x93"
+        + _short_binunicode("id") + b"\x94"
+        + b"\x85"
+        + b"R"
+    )
+    padding = b"}\x94" * (MAX_PICKLE_OPCODES + 5_000)
+    path.write_bytes(b"\x80\x04" + early_rce + padding + b".")
+
+    artifact = _artifact_for(path)
+    finding = check_pickle_calls(artifact)
+
+    assert finding is not None
+    assert finding.id == "BEE-PKL-001"
+    assert finding.severity.value == "critical"
+
+
+def test_analyze_pickle_file_sets_opcode_cap_hit_flag(tmp_path):
+    path = tmp_path / "evil.pkl"
+    path.write_bytes(_build_padded_rce("id", padding_opcodes=MAX_PICKLE_OPCODES + 5_000))
+
+    analysis = analyze_pickle_file(path)
+    assert analysis is not None
+    assert analysis.opcode_cap_hit is True
+    # The RCE past the cap was never reached during analysis -- this is
+    # exactly why BEE-PKL-003 must fire even though nothing dangerous
+    # shows up in what could be inspected.
+    assert "posix.system" not in analysis.globals_referenced
+
+
+def test_analyze_pickle_file_normal_pickle_does_not_set_cap_hit(tmp_path):
+    path = tmp_path / "plain.pkl"
+    _write(path, {"x": 1}, protocol=4)
+
+    analysis = analyze_pickle_file(path)
+    assert analysis is not None
+    assert analysis.opcode_cap_hit is False
 
 
 def test_allowed_globals_covers_the_calibrated_real_checkpoint_corpus():

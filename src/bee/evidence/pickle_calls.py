@@ -5,6 +5,7 @@ from pathlib import Path
 from bee.core.artifact import Artifact
 from bee.evidence.finding import Confidence, Evidence, Finding, Severity
 from bee.formats.pickle_ops import (
+    MAX_PICKLE_OPCODES,
     UNRESOLVED_STACK_GLOBAL,
     PickleAnalysis,
     analyze_pickle_file,
@@ -126,6 +127,9 @@ def check_pickle_calls(artifact: Artifact) -> Finding | None:
 
     dangerous = sorted({g for g in analysis.globals_referenced if g in DANGEROUS_GLOBALS})
     if dangerous:
+        # A dangerous global visible before the cap was ever hit is
+        # reported as-is (CRITICAL) regardless of opcode_cap_hit -- this
+        # is strictly worse information than "we couldn't finish looking".
         reduce_note = (
             f" REDUCE (the opcode that calls it) appears {analysis.reduce_count} time(s)."
             if analysis.reduce_count
@@ -144,6 +148,32 @@ def check_pickle_calls(artifact: Artifact) -> Finding | None:
                 Evidence(type="pickle_global", value=name, source="local_filesystem",
                           confidence=Confidence.VERIFIED)
                 for name in dangerous
+            ],
+        )
+
+    if analysis.opcode_cap_hit:
+        # STOP was never reached: everything past the cap, including a
+        # REDUCE that would call a dangerous primitive, was never
+        # inspected. A benign checkpoint's pickle stream never needs
+        # anywhere near this many opcodes -- a file that does is itself
+        # the anomaly, so this fails closed (a finding) rather than open
+        # (silently falling through to "no dangerous/unrecognized globals
+        # found", which is only true of what could be inspected).
+        return Finding(
+            id="BEE-PKL-003",
+            severity=Severity.HIGH,
+            title="Pickle too large to fully analyze",
+            description=(
+                f"This pickle's opcode stream exceeds the {MAX_PICKLE_OPCODES:,}-opcode "
+                "analysis limit without ever reaching STOP. No real model checkpoint "
+                "needs anywhere near this many opcodes -- a file that does is worth "
+                "treating as suspicious on its own. Everything past this point, "
+                "including any call to a dangerous primitive, was never inspected."
+            ),
+            artifact_path=artifact.path,
+            evidence=[
+                Evidence(type="pickle_opcode_cap_exceeded", value=str(MAX_PICKLE_OPCODES),
+                          source="local_filesystem", confidence=Confidence.VERIFIED)
             ],
         )
 

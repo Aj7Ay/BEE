@@ -58,11 +58,18 @@ class PickleAnalysis:
     protocol: int | None
     globals_referenced: list[str] = field(default_factory=list)
     reduce_count: int = 0
+    # True when the opcode cap (MAX_PICKLE_OPCODES) was hit before STOP
+    # was ever seen -- meaning everything after the cap, including a
+    # REDUCE that would call a dangerous primitive, was never inspected.
+    # This must not be conflated with "not a pickle": the file still
+    # loads and executes exactly like one; analysis was just cut short.
+    opcode_cap_hit: bool = False
 
 
 def _analyze_stream(stream: IO[bytes]) -> PickleAnalysis | None:
     protocol: int | None = None
     found_stop = False
+    hit_opcode_cap = False
     globals_seen: list[str] = []
     reduce_count = 0
     # Tracks the last two string-valued items placed on top of the
@@ -87,6 +94,7 @@ def _analyze_stream(stream: IO[bytes]) -> PickleAnalysis | None:
     try:
         for i, (opcode, arg, _pos) in enumerate(pickletools.genops(stream)):
             if i >= MAX_PICKLE_OPCODES:
+                hit_opcode_cap = True
                 break
             name = opcode.name
             next_stack_top_string: str | None = None  # what this opcode leaves on top, if a tracked string
@@ -140,9 +148,17 @@ def _analyze_stream(stream: IO[bytes]) -> PickleAnalysis | None:
     except (ValueError, EOFError, IndexError):
         return None
 
-    if not found_stop:
+    if not found_stop and not hit_opcode_cap:
+        # Genuinely ran out of stream without ever finding STOP and
+        # without hitting the cap -- not a valid pickle, not a "we
+        # couldn't finish looking" case.
         return None
-    return PickleAnalysis(protocol=protocol, globals_referenced=globals_seen, reduce_count=reduce_count)
+    return PickleAnalysis(
+        protocol=protocol,
+        globals_referenced=globals_seen,
+        reduce_count=reduce_count,
+        opcode_cap_hit=hit_opcode_cap,
+    )
 
 
 def analyze_pickle_file(path: Path) -> PickleAnalysis | None:

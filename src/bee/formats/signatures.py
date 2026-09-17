@@ -147,6 +147,19 @@ def detect_pickle(path: Path) -> DetectionResult | None:
         f"pickle_protocol_{analysis.protocol}" if analysis.protocol is not None
         else "pickle_protocol_0_or_1"
     )
+    if analysis.opcode_cap_hit:
+        # STOP was never reached within the opcode cap -- everything past
+        # it (including a REDUCE that would call a dangerous primitive)
+        # was never inspected. This is still structurally a pickle, not
+        # "unknown": returning None here would let padding past the cap
+        # evade detection entirely, the same evasion a fixed byte-prefix
+        # read already closed once for this format (see analyze_pickle_file).
+        return (
+            "pickle",
+            Confidence.INFERRED,
+            [Evidence(type="header_field", value=f"{protocol_label}_opcode_cap_exceeded",
+                       source="local_filesystem", confidence=Confidence.INFERRED)],
+        )
     return (
         "pickle",
         Confidence.SUPPORTED,

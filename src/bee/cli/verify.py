@@ -5,6 +5,7 @@ from pathlib import Path
 
 import typer
 
+from bee.cli.sanitize import sanitize_for_terminal
 from bee.cli.state import OutputFormat
 from bee.core.artifact import compute_file_hashes
 from bee.core.run import compute_evidence_hash
@@ -234,7 +235,7 @@ def verify_command(
         typer.echo("Artifacts:")
         for result in artifact_results:
             status = result["status"].upper()
-            typer.echo(f"  {status:8} {result['path']}")
+            typer.echo(f"  {status:8} {sanitize_for_terminal(result['path'])}")
             if result["status"] == "changed":
                 typer.echo(f"           recorded: {result['recorded_sha256']}")
                 typer.echo(f"           current:  {result['current_sha256']}")

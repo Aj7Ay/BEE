@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import typer
 
+from bee.cli.sanitize import sanitize_for_terminal
 from bee.storage.db import list_runs
 
 
@@ -20,6 +21,6 @@ def history_command(ctx: typer.Context) -> None:
         )
         counts = counts or "no findings"
         typer.echo(
-            f"{run.id}  {run.created_at.isoformat()}  {run.target_path}  "
+            f"{run.id}  {run.created_at.isoformat()}  {sanitize_for_terminal(run.target_path)}  "
             f"({run.summary.artifact_count} artifacts, {counts})"
         )

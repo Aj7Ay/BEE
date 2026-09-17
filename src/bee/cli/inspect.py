@@ -5,6 +5,7 @@ from pathlib import Path
 
 import typer
 
+from bee.cli.sanitize import sanitize_for_terminal
 from bee.cli.severity import FAIL_ON_HELP, exit_if_threshold_met, parse_severity_option
 from bee.cli.state import OutputFormat
 from bee.core.artifact import Artifact
@@ -56,7 +57,7 @@ def inspect_command(
     try:
         artifact = Artifact.from_file(path)
     except OSError as exc:
-        typer.echo(f"Error: could not read {path}: {exc}", err=True)
+        typer.echo(f"Error: could not read {sanitize_for_terminal(str(path))}: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 
     mismatch = check_mismatch(artifact)
@@ -107,7 +108,7 @@ def _print_inspection(state, artifact: Artifact, findings: list[Finding]) -> Non
         typer.echo(jsonlib.dumps(payload, indent=2))
         return
 
-    typer.echo(f"Path:             {artifact.path}")
+    typer.echo(f"Path:             {sanitize_for_terminal(artifact.path)}")
     typer.echo(f"Size:             {artifact.size} bytes")
     typer.echo(f"SHA-256:          {artifact.sha256}")
     typer.echo(f"SHA-512:          {artifact.sha512}")
@@ -115,13 +116,14 @@ def _print_inspection(state, artifact: Artifact, findings: list[Finding]) -> Non
     typer.echo(f"Detected format:  {artifact.detected_format} ({artifact.format_confidence.value})")
     typer.echo(f"Magic bytes:      {artifact.magic_bytes_hex}")
     if artifact.is_symlink:
-        typer.echo(f"Symlink:          True -> {artifact.symlink_target}")
+        target = sanitize_for_terminal(artifact.symlink_target or "")
+        typer.echo(f"Symlink:          True -> {target}")
     if gguf_info is not None:
         typer.echo(f"GGUF version:     {gguf_info['version']}")
         typer.echo(f"GGUF tensors:     {gguf_info['tensor_count']}")
         typer.echo(f"GGUF metadata kv: {gguf_info['metadata_kv_count']}")
         if gguf_info["architecture"] is not None:
-            typer.echo(f"GGUF architecture: {gguf_info['architecture']}")
+            typer.echo(f"GGUF architecture: {sanitize_for_terminal(gguf_info['architecture'])}")
     if findings:
         for finding in findings:
             typer.echo(f"Finding:          {finding.id} [{finding.severity.value}] {finding.title}")

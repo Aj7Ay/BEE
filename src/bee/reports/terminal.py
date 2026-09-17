@@ -2,16 +2,28 @@ from __future__ import annotations
 
 from rich.console import Console
 from rich.table import Table
+from rich.text import Text
 
+from bee.cli.sanitize import sanitize_for_terminal
 from bee.core.run import Run
 from bee.evidence.finding import Severity
 
 console = Console()
 
 
+def _safe_text(value: str) -> Text:
+    # Text() never interprets its content as Rich markup ("[bold red]...")
+    # and sanitize_for_terminal() neutralizes raw control bytes (ESC and
+    # friends) -- together closing both the markup-injection and the
+    # ANSI-escape-injection route a filename in a scanned directory could
+    # otherwise use to recolor, relocate, or overwrite real output on the
+    # operator's terminal.
+    return Text(sanitize_for_terminal(value))
+
+
 def render_run(run: Run) -> None:
     console.print("[bold]BEE SCAN[/bold]")
-    console.print(f"Target: {run.target_path}")
+    console.print(Text("Target: ") + _safe_text(run.target_path))
     console.print(f"Artifacts scanned: {len(run.artifacts)}")
 
     findings_by_path: dict[str, int] = {}
@@ -26,7 +38,7 @@ def render_run(run: Run) -> None:
     for artifact in run.artifacts:
         finding_count = findings_by_path.get(artifact.path, 0)
         table.add_row(
-            artifact.path,
+            _safe_text(artifact.path),
             artifact.detected_format,
             str(artifact.size),
             str(finding_count) if finding_count else "-",
@@ -46,4 +58,7 @@ def render_run(run: Run) -> None:
         console.print()
         console.print("[bold red]Critical/High findings:[/bold red]")
         for finding in urgent:
-            console.print(f"  {finding.id} [{finding.severity.value}] {finding.artifact_path}: {finding.title}")
+            line = Text(f"  {finding.id} [{finding.severity.value}] ")
+            line += _safe_text(finding.artifact_path)
+            line += Text(f": {finding.title}")
+            console.print(line)

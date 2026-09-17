@@ -116,6 +116,16 @@ evading a naive "last two strings" tracker:
   This is the common case for a real checkpoint from custom code, which
   is exactly why it's LOW and not MEDIUM — a finding that fires on nearly
   every real model gets muted, taking the genuine `os.*` case down with it
+- **`BEE-PKL-003` (high)** — the opcode stream exceeds BEE's 100,000-opcode
+  analysis limit without ever reaching `STOP`. Analysis is bounded by
+  opcode count (not a byte-offset prefix) specifically so padding can't
+  push a payload out of a fixed sniff window — but the cap itself was, for
+  one release, a second way to do the same thing: pad past 100,000 trivial
+  opcodes and a dangerous primitive placed after the cutoff was never
+  reached, and the file reported as `unknown` with zero findings. No real
+  checkpoint's pickle stream needs anywhere near that many opcodes, so
+  hitting the cap now fails closed — reported as suspicious — instead of
+  falling through to a clean, unanalyzed "unknown"
 
 ```
 $ bee scan ./models
