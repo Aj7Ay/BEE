@@ -5,6 +5,7 @@ import json as jsonlib
 import uuid
 from collections import Counter
 from datetime import datetime, timezone
+from pathlib import Path
 
 from pydantic import BaseModel, Field
 
@@ -43,11 +44,21 @@ def compute_evidence_hash(
     and by what version of BEE -- independent of the run's id or
     timestamp. Two scans of identical, unchanged input produce the same
     evidence hash regardless of when they ran or whether --deterministic
-    was passed; a stored run's evidence hash changing (recomputed later
-    against its own stored artifacts/findings) means the record itself
-    was altered after the fact, not that the underlying model changed --
-    that's what re-hashing each artifact's current file content, done
-    separately by `bee verify`, is for.
+    was passed.
+
+    This is a plain, UNKEYED sha256 -- the algorithm is public and the
+    hash is stored right next to the data it covers. That makes it good
+    at what an integrity hash without a secret can be good at: catching
+    accidental corruption and naive edits (a manual database UPDATE that
+    forgets to also update this field, a bug that silently drops a
+    finding). It does **not** resist a capable attacker who can write to
+    the database: such an attacker can edit the record and recompute a
+    matching hash the same way this function does, and `bee verify` will
+    report it as consistent. Detecting that requires a keyed hash (HMAC,
+    with a key not stored beside the database) or a real signature --
+    planned, not yet built. A clean `bee verify` is evidence the record
+    is internally self-consistent, not proof no one who understands this
+    format has touched it.
     """
     payload = {
         "target_path": target_path,
@@ -63,6 +74,15 @@ class Run(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     target_path: str
+    # Absolute form of target_path, resolved at scan time (same process,
+    # same cwd the scan itself ran in) -- `bee verify` anchors artifact
+    # paths to this so it works when run from a different working
+    # directory than the original scan used. Deliberately NOT part of
+    # the evidence hash below: it's a machine-specific filesystem
+    # location, not evidence about the artifact, and including it would
+    # make identical content hash differently depending on where it
+    # happens to be checked out.
+    resolved_target_path: str = ""
     artifacts: list[Artifact]
     findings: list[Finding]
     summary: RunSummary
@@ -79,11 +99,13 @@ class Run(BaseModel):
     ) -> "Run":
         summary = build_summary(artifacts, findings)
         evidence_sha256 = compute_evidence_hash(target_path, artifacts, findings, __version__)
+        resolved_target_path = str(Path(target_path).resolve())
         if deterministic:
             return cls(
                 id=_deterministic_run_id(target_path, artifacts),
                 created_at=datetime.fromtimestamp(0, tz=timezone.utc),
                 target_path=target_path,
+                resolved_target_path=resolved_target_path,
                 artifacts=artifacts,
                 findings=findings,
                 summary=summary,
@@ -92,6 +114,7 @@ class Run(BaseModel):
             )
         return cls(
             target_path=target_path,
+            resolved_target_path=resolved_target_path,
             artifacts=artifacts,
             findings=findings,
             summary=summary,

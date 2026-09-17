@@ -135,6 +135,32 @@ def test_verify_skips_artifact_with_no_recorded_hash(tmp_path, monkeypatch):
     assert payload["artifacts"][0]["status"] == "skipped"
 
 
+def test_verify_works_from_a_different_working_directory(tmp_path, monkeypatch):
+    # Regression test: target_path as scanned ("models", relative) only
+    # resolves correctly from the exact cwd the scan ran in. bee verify
+    # must not require running from that same directory -- it has its
+    # own reason to be run later, from wherever.
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / "models"
+    target.mkdir()
+    builders.write_gguf(target / "model.gguf")
+    result = runner.invoke(app, ["--format", "json", "scan", "models"])  # relative target
+    run_id = json.loads(result.output)["id"]
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)  # bee verify runs from a different cwd now
+
+    verify_result = runner.invoke(
+        app, ["--db", str(tmp_path / ".bee" / "bee.db"), "--format", "json", "verify", run_id]
+    )
+    payload = json.loads(verify_result.output)
+
+    assert verify_result.exit_code == 0
+    assert payload["ok"] is True
+    assert payload["artifacts"][0]["status"] == "ok"
+
+
 def test_verify_detects_symlink_swapped_in_after_vetting(tmp_path, monkeypatch):
     # The TOCTOU case: a file that was a normal, in-root file (or a safe
     # in-root symlink) at scan time is replaced with an escaping symlink

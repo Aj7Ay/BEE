@@ -182,9 +182,9 @@ without `--deterministic`; the run id identifies *which* recorded run
 found it, the evidence hash identifies *what* it found.
 
 `bee verify <run-id>` checks two different things against that record:
-whether it's been altered since it was written (a hand-edited database
-row, say), and whether each artifact's *current* file content still
-matches the hash recorded when it was vetted:
+whether it's internally self-consistent with what's stored, and whether
+each artifact's *current* file content still matches the hash recorded
+when it was vetted:
 
 ```
 $ bee verify b74ff8e6-d316-4d7a-9dc5-ff536d4f5deb
@@ -201,6 +201,17 @@ vetted, but has since been replaced with a symlink escaping the original
 scan root, is flagged as `ESCAPED` rather than silently re-hashed — the
 same protection `scan`/`inspect` apply during vetting also holds during
 re-verification.
+
+**What the evidence check does and doesn't prove:** `evidence_sha256` is
+a plain, unkeyed sha256 stored right next to the data it covers. It
+catches accidental corruption and naive edits to the stored record —
+not a capable attacker who can write to the database, since the
+algorithm is public and such an attacker can simply recompute a
+matching hash after editing it. A clean `bee verify` means the record is
+internally self-consistent; it isn't a cryptographic guarantee that no
+one who understands this format has touched it. That guarantee needs a
+keyed hash or a real signature, which is a planned, separate feature —
+not yet built.
 
 ## What BEE detects today
 

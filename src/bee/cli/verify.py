@@ -21,11 +21,18 @@ def verify_command(
 
     Two independent things are checked: whether the recorded evidence
     (the findings and artifact records BEE originally produced) still
-    hashes to what was stored -- catching tampering with the record
-    itself -- and whether each artifact's *current* file content still
-    matches the hash recorded when it was vetted -- catching the model
-    having been swapped or modified since. Being asked to prove nothing
-    changed is the whole point of a vetting record.
+    hashes to what was stored, and whether each artifact's *current*
+    file content still matches the hash recorded when it was vetted --
+    catching the artifact having been swapped or modified since.
+
+    The evidence check is an unkeyed hash (see
+    bee.core.run.compute_evidence_hash) -- it catches accidental
+    corruption and naive edits to the stored record, not a capable
+    attacker who can write to the database and recompute a matching
+    hash after editing it. A clean result here means the record is
+    internally self-consistent, not that it's cryptographically
+    guaranteed untouched; that guarantee needs a keyed hash or a
+    signature, which isn't built yet.
     """
     state = ctx.obj
     run = load_run(state.db_path, run_id)
@@ -38,13 +45,25 @@ def verify_command(
     )
     evidence_ok = recomputed_hash == run.evidence_sha256
 
-    scan_root = Path(run.target_path)
-    if not scan_root.is_dir():
-        scan_root = scan_root.parent
+    # Anchor to the absolute location recorded at scan time, not the
+    # given target_path as-is: a relative target_path ("./models") only
+    # resolves correctly from the exact working directory the scan ran
+    # in, and bee verify has no reason to require running from there.
+    resolved_target = Path(run.resolved_target_path) if run.resolved_target_path else Path(run.target_path)
+    given_target = Path(run.target_path)
+    scan_root = resolved_target if resolved_target.is_dir() else resolved_target.parent
+
+    def _resolve_artifact_path(artifact_path: str) -> Path:
+        p = Path(artifact_path)
+        try:
+            relative = p.relative_to(given_target)
+        except ValueError:
+            return p  # already absolute, or doesn't share the recorded prefix -- use as-is
+        return resolved_target if str(relative) == "." else resolved_target / relative
 
     artifact_results = []
     for artifact in run.artifacts:
-        path = Path(artifact.path)
+        path = _resolve_artifact_path(artifact.path)
         if not artifact.sha256:
             # Nothing was recorded to compare against (an unresolved
             # symlink, an unreadable file at scan time, ...).
