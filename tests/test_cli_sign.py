@@ -260,3 +260,72 @@ def test_verify_pin_rejects_an_unsigned_run(tmp_path, monkeypatch):
     assert result.exit_code == 1
     assert payload["signed"] is False
     assert payload["ok"] is False
+
+
+# ---------------------------------------------------------------------------
+# Pin input-validation edge cases: the pin mechanism itself is correct,
+# but the human typing it can get the case, path, or presence wrong.
+# ---------------------------------------------------------------------------
+
+
+def test_verify_signer_pin_is_case_insensitive(tmp_path, monkeypatch):
+    # A fingerprint pasted in uppercase (password managers, some
+    # terminals) is the same fingerprint, not a different key -- it must
+    # not read as a substitution attack.
+    monkeypatch.chdir(tmp_path)
+    key_dir = tmp_path / "keys"
+    runner.invoke(app, ["keygen", "--key-dir", str(key_dir)])
+
+    file_path = tmp_path / "model.gguf"
+    builders.write_gguf(file_path)
+    run_id = _run_id_from_scan(str(file_path))
+    runner.invoke(app, ["sign", run_id, "--key", str(key_dir / "bee_ed25519")])
+
+    fp = json.loads(runner.invoke(app, ["--format", "json", "verify", run_id]).output)["signer_fingerprint"]
+
+    result = runner.invoke(app, ["--format", "json", "verify", run_id, "--signer", fp.upper()])
+    payload = json.loads(result.output)
+
+    assert result.exit_code == 0
+    assert payload["signer_matches"] is True
+
+
+def test_verify_pubkey_missing_file_fails_cleanly_not_a_traceback(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    file_path = tmp_path / "model.gguf"
+    builders.write_gguf(file_path)
+    run_id = _run_id_from_scan(str(file_path))
+
+    result = runner.invoke(app, ["verify", run_id, "--pubkey", str(tmp_path / "does" / "not" / "exist.pub")])
+
+    assert result.exit_code == 1
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert "could not read" in result.output
+
+
+def test_verify_rejects_empty_signer_instead_of_silently_unpinning(tmp_path, monkeypatch):
+    # The dangerous shape in CI: `--signer "$EXPECTED"` with $EXPECTED
+    # unset expands to `--signer ""`. A gate meant to *require* a signer
+    # must fail loud on that, not silently fall back to unpinned
+    # verification and report VALID on an unrelated key.
+    monkeypatch.chdir(tmp_path)
+    file_path = tmp_path / "model.gguf"
+    builders.write_gguf(file_path)
+    run_id = _run_id_from_scan(str(file_path))
+
+    result = runner.invoke(app, ["verify", run_id, "--signer", ""])
+
+    assert result.exit_code == 1
+    assert "requires a non-empty value" in result.output
+
+
+def test_verify_rejects_empty_pubkey_instead_of_silently_unpinning(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    file_path = tmp_path / "model.gguf"
+    builders.write_gguf(file_path)
+    run_id = _run_id_from_scan(str(file_path))
+
+    result = runner.invoke(app, ["verify", run_id, "--pubkey", ""])
+
+    assert result.exit_code == 1
+    assert "requires a non-empty value" in result.output

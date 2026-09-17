@@ -26,7 +26,7 @@ def verify_command(
         "An attacker can discard your signature, re-sign under their own "
         "key, and an unpinned verify reports VALID.",
     ),
-    pubkey: Path | None = typer.Option(
+    pubkey: str | None = typer.Option(
         None,
         "--pubkey",
         help="Require the run to be signed by the key at this public key "
@@ -63,14 +63,46 @@ def verify_command(
     self-consistent, not cryptographically guaranteed untouched.
     """
     state = ctx.obj
+
+    # Reject an explicitly-empty pin rather than silently treating it as
+    # "no pin requested" -- `--signer "$EXPECTED"` with $EXPECTED unset in
+    # a CI script expands to `--signer ""`, and a gate meant to *require*
+    # a signer must fail loud on that misconfiguration, not fail open by
+    # quietly falling back to unpinned verification.
+    if signer is not None and not signer.strip():
+        typer.echo("Error: --signer requires a non-empty value", err=True)
+        raise typer.Exit(code=1)
+    # Validated as a raw string before it becomes a Path: Path("") stringifies
+    # back to "." (the current directory), so checking str(pubkey_path) after
+    # conversion would silently treat an empty --pubkey as "read this
+    # directory" rather than "no value was given" -- the same fail-open
+    # shape as the --signer case, just hidden one step further in.
+    if pubkey is not None and not pubkey.strip():
+        typer.echo("Error: --pubkey requires a non-empty value", err=True)
+        raise typer.Exit(code=1)
+    pubkey_path = Path(pubkey) if pubkey is not None else None
+
     run = load_run(state.db_path, run_id)
     if run is None:
         typer.echo(f"No run found with id {run_id!r}", err=True)
         raise typer.Exit(code=1)
 
-    expected_public_key_hex = pubkey.read_bytes().hex() if pubkey is not None else None
-    expected_fingerprint = signer or (
-        fingerprint(bytes.fromhex(expected_public_key_hex)) if expected_public_key_hex else None
+    expected_public_key_hex = None
+    if pubkey_path is not None:
+        try:
+            expected_public_key_hex = pubkey_path.read_bytes().hex()
+        except OSError as exc:
+            typer.echo(f"Error: could not read --pubkey {pubkey_path}: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+
+    # Fingerprints are compared case-insensitively: a pin pasted in
+    # uppercase (common from password managers, some terminals) is the
+    # same fingerprint, not a different key, and must not read as a
+    # substitution attack.
+    expected_fingerprint = (
+        signer.strip().lower() if signer is not None
+        else fingerprint(bytes.fromhex(expected_public_key_hex)) if expected_public_key_hex
+        else None
     )
     pin_requested = expected_fingerprint is not None
 
