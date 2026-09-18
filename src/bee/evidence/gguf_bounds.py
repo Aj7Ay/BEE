@@ -8,6 +8,13 @@ from bee.formats.gguf_ops import GgufTensorInfo, analyze_gguf, compute_tensor_by
 
 _MAX_REPORTED_PROBLEMS = 10
 
+# A header declaring more tensors than this is itself the finding,
+# rather than something exhaustively bounds-and-overlap-checked -- an
+# attacker controls the header's declared tensor count directly, and no
+# real model approaches this. Matches the same-purpose, same-value cap
+# in bee.evidence.safetensors_bounds (_MAX_TENSORS_CHECKED).
+_MAX_TENSORS_CHECKED = 200_000
+
 
 def _tensor_problem(tensor: GgufTensorInfo, tensor_data_start: int, alignment: int, file_size: int) -> str | None:
     if tensor.offset < 0:
@@ -38,6 +45,42 @@ def _tensor_problem(tensor: GgufTensorInfo, tensor_data_start: int, alignment: i
     return None
 
 
+def _overlap_problems(
+    tensors: list[GgufTensorInfo], tensor_data_start: int
+) -> list[str]:
+    """O(n log n): sort by absolute start, then a single sweep tracking
+    the furthest end seen so far is enough to detect every overlapping
+    pair without comparing all n^2 combinations -- the same sweep
+    bee.evidence.safetensors_bounds._overlap_problems already uses for
+    SafeTensors, adapted here for GGUF's offset-plus-computed-size
+    ranges instead of an explicit data_offsets pair.
+
+    Only given tensors whose absolute range is already known to be
+    valid (see check_gguf_bounds below): a tensor with an unrecognized
+    ggml_type has no computable end, and one already out of bounds is
+    already reported by _tensor_problem -- reporting it again here as
+    an "overlap" would just be confusing, not more informative.
+    """
+    ranges: list[tuple[int, int, str]] = []
+    for tensor in tensors:
+        byte_size = compute_tensor_byte_size(tensor.ggml_type, tensor.dimensions)
+        if byte_size is None:
+            continue
+        absolute_start = tensor_data_start + tensor.offset
+        ranges.append((absolute_start, absolute_start + byte_size, tensor.name))
+
+    problems = []
+    max_end_so_far = -1
+    holder_name = ""
+    for start, end, name in sorted(ranges, key=lambda r: r[0]):
+        if start < max_end_so_far:
+            problems.append(f"{name} overlaps {holder_name}")
+        if end > max_end_so_far:
+            max_end_so_far = end
+            holder_name = name
+    return problems
+
+
 def check_gguf_bounds(artifact: Artifact, content: bytes | None = None) -> Finding | None:
     """A file can be structurally recognizable as GGUF (correct magic,
     a header that parses) while its tensor table still lies about where
@@ -47,6 +90,10 @@ def check_gguf_bounds(artifact: Artifact, content: bytes | None = None) -> Findi
     what's left. The single most common real-world trigger for this is
     an incomplete download, not an attack -- but either way, a file a
     naive loader would read past its own end is worth flagging.
+
+    Also checks that no two tensors claim the same bytes -- individually
+    valid ranges that still overlap each other, which a per-tensor
+    end-of-file check alone can never catch.
 
     `content`, when provided, is this same artifact's already-buffered
     bytes (see Artifact.from_file / bee.formats.io_source) -- analyzed
@@ -60,11 +107,33 @@ def check_gguf_bounds(artifact: Artifact, content: bytes | None = None) -> Findi
     if analysis is None:
         return None
 
+    if len(analysis.tensors) > _MAX_TENSORS_CHECKED:
+        return Finding(
+            id="BEE-GGUF-001",
+            severity=Severity.HIGH,
+            title="GGUF header declares an implausible number of tensors",
+            description=(
+                f"This file's GGUF header declares {len(analysis.tensors)} "
+                f"tensors, more than BEE bounds-checks exhaustively "
+                f"({_MAX_TENSORS_CHECKED}). That alone is atypical of a real model."
+            ),
+            artifact_path=artifact.path,
+            evidence=[
+                Evidence(type="gguf_bounds", value=f"tensor_count={len(analysis.tensors)}",
+                          source="local_filesystem", confidence=Confidence.VERIFIED),
+            ],
+        )
+
     problems = []
+    valid_tensors: list[GgufTensorInfo] = []
     for tensor in analysis.tensors:
         problem = _tensor_problem(tensor, analysis.tensor_data_start, analysis.alignment, analysis.file_size)
         if problem is not None:
             problems.append(problem)
+        else:
+            valid_tensors.append(tensor)
+
+    problems.extend(_overlap_problems(valid_tensors, analysis.tensor_data_start))
 
     if not problems:
         return None

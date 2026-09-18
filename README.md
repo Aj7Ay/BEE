@@ -236,6 +236,22 @@ mid-download at 310,558,210 of its actual 483,116,416 bytes — the magic
 bytes, header, and metadata are all intact, so format detection alone
 would call this a valid GGUF file.)
 
+`BEE-GGUF-001` also catches two tensors that individually fit inside
+the file but claim the same bytes as each other — a range check against
+the end of the file alone can never catch this, since neither tensor
+is out of bounds on its own:
+
+```
+$ bee inspect overlap.gguf --fail-on high
+Detected format:  gguf (verified)
+Finding:          BEE-GGUF-001 [high] GGUF tensor table declares invalid or out-of-bounds data
+```
+
+The overlap check is an O(n log n) sweep (sort by start, track the
+furthest end seen so far), the same algorithm SafeTensors' own overlap
+check already uses — an attacker-controlled tensor count must not turn
+"check for overlaps" into its own CPU-exhaustion attack.
+
 ## Evidence integrity and re-verification
 
 Every stored run carries an `evidence_sha256` — a hash of exactly what

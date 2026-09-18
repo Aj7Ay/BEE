@@ -178,6 +178,102 @@ def test_finding_for_offset_past_end_of_file(tmp_path):
     assert "past the end" in finding.description
 
 
+def test_finding_for_two_tensors_sharing_the_same_bytes(tmp_path):
+    # Two 4-byte F32 tensors, both individually well inside the file,
+    # both correctly aligned -- but "a" and "b" claim the exact same
+    # 4 bytes of tensor data. A real loader reading both would silently
+    # alias one tensor's memory onto the other's. Neither tensor is out
+    # of file bounds on its own, so only a cross-tensor overlap check
+    # (not the per-tensor end-of-file check) can catch this.
+    path = tmp_path / "overlap.gguf"
+    path.write_bytes(
+        _build_gguf(
+            tensors=[
+                ("a", [1], _GGML_TYPE_F32, 0),
+                ("b", [1], _GGML_TYPE_F32, 0),  # same offset as "a"
+            ],
+            tensor_data=b"\x00" * 4,
+        )
+    )
+    artifact = _artifact_for(path)
+    finding = check_gguf_bounds(artifact)
+
+    assert finding is not None
+    assert "overlaps" in finding.description
+
+
+def test_no_finding_for_contiguous_non_overlapping_tensors(tmp_path):
+    path = tmp_path / "contiguous.gguf"
+    path.write_bytes(
+        _build_gguf(
+            tensors=[
+                ("a", [1], _GGML_TYPE_F32, 0),
+                ("b", [1], _GGML_TYPE_F32, 32),  # next alignment slot, no overlap
+            ],
+            tensor_data=b"\x00" * 36,
+        )
+    )
+    artifact = _artifact_for(path)
+    assert check_gguf_bounds(artifact) is None
+
+
+def test_overlap_check_skips_tensor_with_unknown_ggml_type(tmp_path):
+    # A tensor whose type isn't in GGML_QUANT_SIZES has no computable
+    # byte size, so it can't be placed in a range for overlap purposes --
+    # it must not crash the sweep, and must not produce a false overlap
+    # report against a tensor that legitimately shares its start offset
+    # (the unknown-type tensor's true size, and therefore whether it
+    # actually overlaps anything, is unknowable from this file alone).
+    path = tmp_path / "unknown_type.gguf"
+    path.write_bytes(
+        _build_gguf(
+            tensors=[
+                ("a", [1], _GGML_TYPE_F32, 0),
+                ("b", [1], 9999, 0),  # unrecognized type, same offset as "a"
+            ],
+            tensor_data=b"\x00" * 4,
+        )
+    )
+    artifact = _artifact_for(path)
+    assert check_gguf_bounds(artifact) is None
+
+
+def test_overlap_detection_stays_fast_with_many_tensors(tmp_path):
+    # Regression test for the O(n^2) pairwise comparison this replaced:
+    # a header can declare an arbitrary number of tensors, and a
+    # quadratic algorithm turns tensor count directly into CPU cost an
+    # attacker controls. The same protection SafeTensors' bounds check
+    # already has (tests/test_safetensors_bounds.py::
+    # test_overlap_detection_stays_fast_with_many_tensors), adapted here
+    # for GGUF's tensor table.
+    n = 5_000
+    tensors = [(f"t{i}", [1], _GGML_TYPE_F32, i * 32) for i in range(n)]
+    path = tmp_path / "many.gguf"
+    path.write_bytes(_build_gguf(tensors=tensors, tensor_data=b"\x00" * (n * 32)))
+
+    artifact = _artifact_for(path)
+    start = time.monotonic()
+    finding = check_gguf_bounds(artifact)
+    elapsed = time.monotonic() - start
+
+    assert finding is None  # all valid, contiguous, non-overlapping
+    assert elapsed < 2.0, f"overlap check took {elapsed:.2f}s for {n} tensors"
+
+
+def test_finding_for_implausible_tensor_count(tmp_path):
+    from bee.evidence.gguf_bounds import _MAX_TENSORS_CHECKED
+
+    path = tmp_path / "too_many_tensors.gguf"
+    tensors = [(f"t{i}", [1], _GGML_TYPE_F32, i * 32) for i in range(_MAX_TENSORS_CHECKED + 1)]
+    path.write_bytes(_build_gguf(tensors=tensors, tensor_data=b"\x00" * ((_MAX_TENSORS_CHECKED + 1) * 32)))
+
+    artifact = _artifact_for(path)
+    finding = check_gguf_bounds(artifact)
+
+    assert finding is not None
+    assert "implausible number of tensors" in finding.title
+
+
 def test_none_for_non_gguf_artifact(tmp_path):
     path = tmp_path / "model.safetensors"
     builders.write_safetensors(path)
