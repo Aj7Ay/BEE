@@ -21,6 +21,18 @@ class OllamaSource(Source):
         self._raw_name = name
         self._temp_dir: Path | None = None
 
+    def _is_safe_blob_ref(self, blob_ref: str) -> bool:
+        """Reject path traversal, absolute paths, and null bytes."""
+        if not blob_ref or blob_ref != blob_ref.strip():
+            return False
+        if blob_ref.startswith("/") or blob_ref.startswith("\\"):
+            return False
+        if ".." in blob_ref:
+            return False
+        if "\x00" in blob_ref:
+            return False
+        return True
+
     @property
     def _model_name(self) -> str:
         """Extract just the model name (without tags)."""
@@ -79,6 +91,9 @@ class OllamaSource(Source):
                         parts = line.split()
                         if len(parts) >= 2:
                             blob_ref = parts[1]
+                            # Validate blob_ref: reject traversal/absolute paths
+                            if not self._is_safe_blob_ref(blob_ref):
+                                continue
                             ollama_dir = Path(os.environ.get("OLLAMA_MODELS", Path.home() / ".ollama" / "models"))
                             blob_path = ollama_dir / "blobs" / blob_ref
                             if blob_path.is_file():

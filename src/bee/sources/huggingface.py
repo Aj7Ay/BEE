@@ -37,6 +37,10 @@ class HuggingFaceSource(Source):
 
         artifacts: list[Path] = []
         for filename in files:
+            # Validate filename: reject traversal, absolute paths
+            if not self._is_safe_filename(filename):
+                continue
+
             if self._is_model_file(filename):
                 try:
                     path = hf_hub_download(
@@ -50,6 +54,18 @@ class HuggingFaceSource(Source):
                     continue
 
         return artifacts
+
+    def _is_safe_filename(self, filename: str) -> bool:
+        """Reject path traversal, absolute paths, and null bytes."""
+        if not filename or filename != filename.strip():
+            return False
+        if filename.startswith("/") or filename.startswith("\\"):
+            return False
+        if ".." in filename:
+            return False
+        if "\x00" in filename:
+            return False
+        return True
 
     def _is_model_file(self, filename: str) -> bool:
         """Determine if a file is a model artifact worth scanning."""
