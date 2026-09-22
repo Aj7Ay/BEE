@@ -134,6 +134,7 @@ class Run(BaseModel):
     public_key: str = ""
     provenance: Provenance | None = None
     decision: str | None = None
+    policy_violations: list[dict] = Field(default_factory=list)
     license_info: dict | None = None
     vulnerabilities: list[dict] = Field(default_factory=list)
     model_card: dict | None = None
@@ -169,6 +170,7 @@ class Run(BaseModel):
         deterministic: bool = False,
         provenance: Provenance | None = None,
         decision: str | None = None,
+        policy_violations: list[dict] | None = None,
         license_info: dict | None = None,
         vulnerabilities: list[dict] | None = None,
         model_card: dict | None = None,
@@ -190,6 +192,7 @@ class Run(BaseModel):
                 evidence_sha256=evidence_sha256,
                 provenance=provenance,
                 decision=decision,
+                policy_violations=policy_violations or [],
                 license_info=license_info,
                 vulnerabilities=vulnerabilities or [],
                 model_card=model_card,
@@ -205,6 +208,7 @@ class Run(BaseModel):
             evidence_sha256=evidence_sha256,
             provenance=provenance,
             decision=decision,
+            policy_violations=policy_violations or [],
             license_info=license_info,
             vulnerabilities=vulnerabilities or [],
             model_card=model_card,

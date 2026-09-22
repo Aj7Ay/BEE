@@ -67,4 +67,10 @@ def scan_command(
     except (sqlite3.Error, OSError) as exc:
         typer.echo(f"Warning: could not save run to {state.db_path}: {exc}", err=True)
 
-    exit_if_threshold_met(run.findings, threshold)
+    # Fail closed: exit nonzero if critical/high findings present (unless threshold explicitly set lower)
+    if threshold is None:
+        from bee.evidence.finding import Severity
+        if any(f.severity in (Severity.CRITICAL, Severity.HIGH) for f in run.findings):
+            raise typer.Exit(code=1)
+    else:
+        exit_if_threshold_met(run.findings, threshold)

@@ -41,6 +41,7 @@ class VulnerabilityPolicy(BaseModel):
     high: Action = Action.BLOCK
     medium: Action = Action.ALLOW
     low: Action = Action.ALLOW
+    unknown: Action = Action.REVIEW
 
 
 class IntegrityPolicy(BaseModel):

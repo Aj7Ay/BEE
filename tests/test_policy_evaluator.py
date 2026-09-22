@@ -1,14 +1,15 @@
 """Unit tests for policy evaluator verdict logic."""
 
 from bee.evidence.finding import Finding, Severity, Evidence, Confidence
-from bee.policy.rules import Policy, FindingPolicy, Action
+from bee.policy.rules import Policy, FindingPolicy, IntegrityPolicy, FormatPolicy, VulnerabilityPolicy, Action
 from bee.policy.evaluator import PolicyEvaluator
 
 
 def test_evaluator_blocks_on_critical_finding():
     """Policy should block when critical finding present."""
     policy = Policy(
-        findings=FindingPolicy(critical=Action.BLOCK, high=Action.ALLOW)
+        findings=FindingPolicy(critical=Action.BLOCK, high=Action.ALLOW),
+        integrity=IntegrityPolicy(require_sha256=False)
     )
     findings = [Finding(
         id="BEE-TEST-001",
@@ -34,7 +35,8 @@ def test_evaluator_allows_low_findings_with_allow_policy():
             high=Action.BLOCK,
             medium=Action.REVIEW,
             low=Action.ALLOW
-        )
+        ),
+        integrity=IntegrityPolicy(require_sha256=False)
     )
     findings = [Finding(
         id="BEE-TEST-001",
@@ -54,7 +56,8 @@ def test_evaluator_allows_low_findings_with_allow_policy():
 def test_evaluator_reviews_on_medium_finding():
     """Policy should review when medium finding present."""
     policy = Policy(
-        findings=FindingPolicy(critical=Action.BLOCK, high=Action.BLOCK, medium=Action.REVIEW)
+        findings=FindingPolicy(critical=Action.BLOCK, high=Action.BLOCK, medium=Action.REVIEW),
+        integrity=IntegrityPolicy(require_sha256=False)
     )
     findings = [Finding(
         id="BEE-TEST-001",
@@ -75,7 +78,8 @@ def test_evaluator_reviews_on_medium_finding():
 def test_evaluator_allows_clean_scan():
     """Policy should allow when no findings present."""
     policy = Policy(
-        findings=FindingPolicy(critical=Action.BLOCK, high=Action.BLOCK, medium=Action.REVIEW)
+        findings=FindingPolicy(critical=Action.BLOCK, high=Action.BLOCK, medium=Action.REVIEW),
+        integrity=IntegrityPolicy(require_sha256=False)
     )
 
     evaluator = PolicyEvaluator()
@@ -87,7 +91,8 @@ def test_evaluator_allows_clean_scan():
 def test_evaluator_multiple_findings_takes_worst():
     """When multiple findings, worst action takes precedence."""
     policy = Policy(
-        findings=FindingPolicy(critical=Action.BLOCK, high=Action.REVIEW, low=Action.ALLOW)
+        findings=FindingPolicy(critical=Action.BLOCK, high=Action.REVIEW, low=Action.ALLOW),
+        integrity=IntegrityPolicy(require_sha256=False)
     )
     findings = [
         Finding(
@@ -117,7 +122,9 @@ def test_evaluator_multiple_findings_takes_worst():
 
 def test_evaluator_empty_policy_defaults_to_fail_closed():
     """Empty policy should still enforce fail-closed on critical."""
-    policy = Policy()
+    policy = Policy(
+        integrity=IntegrityPolicy(require_sha256=False)
+    )
     findings = [Finding(
         id="BEE-CRITICAL-001",
         severity=Severity.CRITICAL,
@@ -142,7 +149,8 @@ def test_evaluator_all_severity_levels():
             medium=Action.REVIEW,
             low=Action.ALLOW,
             info=Action.ALLOW,
-        )
+        ),
+        integrity=IntegrityPolicy(require_sha256=False)
     )
 
     severities = [
@@ -171,3 +179,108 @@ def test_evaluator_all_severity_levels():
         else:
             assert len(violations) > 0, f"{severity.value} should violate"
             assert any(v.action == expected_action for v in violations), f"{severity.value} should {expected_action}"
+
+
+def test_issue_4_formats_blocked_checks_detected_format():
+    """Issue #4: formats.blocked should check detected_format against the list."""
+    policy = Policy(
+        formats=FormatPolicy(blocked=["pickle"]),
+        findings=FindingPolicy(critical=Action.BLOCK, high=Action.BLOCK, medium=Action.REVIEW, low=Action.ALLOW),
+        integrity=IntegrityPolicy(require_sha256=False)
+    )
+
+    # Finding with safetensors detected (not in blocked list)
+    finding_safe = Finding(
+        id="BEE-FMT-001",
+        severity=Severity.CRITICAL,
+        title="Format mismatch",
+        description="Test",
+        artifact_path="test.pt",
+        evidence=[
+            Evidence(type="file_extension_format", value="pytorch", source="test", confidence=Confidence.VERIFIED),
+            Evidence(type="detected_format", value="safetensors", source="test", confidence=Confidence.VERIFIED),
+        ],
+    )
+
+    evaluator = PolicyEvaluator()
+    _, violations = evaluator.evaluate(policy, [finding_safe], None, None, [])
+
+    # Should not block because safetensors is not in the blocked list
+    assert not any(v.policy_rule == "formats.blocked" for v in violations), "Safetensors should not be blocked"
+
+    # Finding with pickle detected (in blocked list) at CRITICAL severity
+    finding_pickle = Finding(
+        id="BEE-FMT-001",
+        severity=Severity.CRITICAL,
+        title="Format mismatch",
+        description="Test",
+        artifact_path="test.safetensors",
+        evidence=[
+            Evidence(type="file_extension_format", value="safetensors", source="test", confidence=Confidence.VERIFIED),
+            Evidence(type="detected_format", value="pickle", source="test", confidence=Confidence.VERIFIED),
+        ],
+    )
+
+    _, violations = evaluator.evaluate(policy, [finding_pickle], None, None, [])
+
+    # Should block because pickle is in the blocked list and critical severity triggers block
+    assert any(v.policy_rule == "formats.blocked" and v.action == Action.BLOCK for v in violations), "Pickle should be blocked"
+
+    # Finding with pickle at LOW severity should be allowed (respects findings policy)
+    finding_pickle_low = Finding(
+        id="BEE-FMT-001",
+        severity=Severity.LOW,
+        title="Format mismatch",
+        description="Test",
+        artifact_path="test.safetensors",
+        evidence=[
+            Evidence(type="file_extension_format", value="safetensors", source="test", confidence=Confidence.VERIFIED),
+            Evidence(type="detected_format", value="pickle", source="test", confidence=Confidence.VERIFIED),
+        ],
+    )
+
+    _, violations = evaluator.evaluate(policy, [finding_pickle_low], None, None, [])
+
+    # Should be allowed because LOW severity allows this format (respects findings policy)
+    assert not any(v.policy_rule == "formats.blocked" for v in violations), "Low severity pickle should be allowed per findings policy"
+
+
+def test_issue_5_vulnerabilities_unknown_severity():
+    """Issue #5: Vulnerabilities with unknown severity should be handled."""
+    policy = Policy(
+        vulnerabilities=VulnerabilityPolicy(unknown=Action.REVIEW),
+        integrity=IntegrityPolicy(require_sha256=False)
+    )
+    
+    # Vulnerability with unknown severity
+    vulns = [{"severity": "unknown"}]
+    
+    evaluator = PolicyEvaluator()
+    _, violations = evaluator.evaluate(policy, [], None, None, vulns)
+    
+    # Should review because unknown severity defaults to review
+    assert any(v.policy_rule == "vulnerabilities.unknown" and v.action == Action.REVIEW for v in violations), "Unknown severity should review"
+    
+    # Missing severity should also map to unknown
+    vulns_missing = [{"name": "test"}]  # No severity field
+    
+    _, violations = evaluator.evaluate(policy, [], None, None, vulns_missing)
+    
+    # Should review because missing severity maps to unknown
+    assert any(v.policy_rule == "vulnerabilities.unknown" and v.action == Action.REVIEW for v in violations), "Missing severity should review"
+
+
+def test_issue_6_integrity_require_sha256_fail_closed():
+    """Issue #6: integrity.require_sha256 should fail closed when provenance absent."""
+    policy = Policy(
+        integrity=IntegrityPolicy(require_sha256=True)
+    )
+    
+    evaluator = PolicyEvaluator()
+    
+    # Missing provenance should block when sha256 is required
+    _, violations = evaluator.evaluate(policy, [], None, None, [])
+    
+    assert any(v.policy_rule == "integrity.require_sha256" and v.action == Action.BLOCK for v in violations), "Missing provenance should block when sha256 required"
+
+

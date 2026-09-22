@@ -52,7 +52,7 @@ class PolicyEvaluator:
         """Evaluate findings against policy. Returns (decision, violations)."""
         violations: list[PolicyViolation] = []
 
-        violations.extend(self._check_formats(findings, policy.formats))
+        violations.extend(self._check_formats(findings, policy.formats, policy.findings))
         violations.extend(self._check_findings(findings, policy.findings))
         violations.extend(self._check_code(findings, policy.custom_code))
         violations.extend(self._check_provenance(provenance, policy))
@@ -66,19 +66,69 @@ class PolicyEvaluator:
         return decision, violations
 
     def _check_formats(
-        self, findings: list[Finding], fmt_policy: FormatPolicy
+        self, findings: list[Finding], fmt_policy: FormatPolicy, findings_policy: FindingPolicy = None
     ) -> list[PolicyViolation]:
         # Only enforce format blocking if formats are actually configured in policy
         if not fmt_policy.blocked:
             return []
 
         format_findings = [f for f in findings if f.id == "BEE-FMT-001"]
-        if format_findings:
-            return [PolicyViolation(
-                policy_rule="formats.blocked",
-                description=f"Format mismatch detected ({len(format_findings)} finding(s)) — file may be mislabeled or tampered",
-                action=Action.BLOCK,
-            )]
+        if not format_findings:
+            return []
+
+        # Extract detected formats and check if they are in the blocked list
+        blocked_findings = []
+        for finding in format_findings:
+            # Extract detected_format from evidence (type "detected_format")
+            detected_format = None
+            for evidence in finding.evidence:
+                if evidence.type == "detected_format":
+                    detected_format = evidence.value
+                    break
+
+            # Only block if the detected format is in the blocked list
+            if detected_format and detected_format in fmt_policy.blocked:
+                blocked_findings.append(finding)
+
+        if blocked_findings:
+            # Determine worst action based on finding severities using findings policy
+            worst_action = Action.ALLOW
+            for finding in blocked_findings:
+                if findings_policy:
+                    # Use findings policy to determine action for this severity
+                    if finding.severity == Severity.CRITICAL:
+                        action = findings_policy.critical
+                    elif finding.severity == Severity.HIGH:
+                        action = findings_policy.high
+                    elif finding.severity == Severity.MEDIUM:
+                        action = findings_policy.medium
+                    elif finding.severity == Severity.LOW:
+                        action = findings_policy.low
+                    else:  # INFO
+                        action = findings_policy.info
+                else:
+                    # Fallback: CRITICAL/HIGH -> BLOCK, MEDIUM -> REVIEW, LOW/INFO -> ALLOW
+                    if finding.severity in (Severity.CRITICAL, Severity.HIGH):
+                        action = Action.BLOCK
+                    elif finding.severity == Severity.MEDIUM:
+                        action = Action.REVIEW
+                    else:
+                        action = Action.ALLOW
+
+                # Track worst action (BLOCK > REVIEW > ALLOW)
+                if action == Action.BLOCK:
+                    worst_action = Action.BLOCK
+                    break
+                elif action == Action.REVIEW and worst_action != Action.BLOCK:
+                    worst_action = Action.REVIEW
+
+            # Only return violation if there's an actual violation (not ALLOW)
+            if worst_action != Action.ALLOW:
+                return [PolicyViolation(
+                    policy_rule="formats.blocked",
+                    description=f"Format mismatch detected ({len(blocked_findings)} finding(s)) — file may be mislabeled or tampered",
+                    action=worst_action,
+                )]
         return []
 
     def _check_findings(
@@ -176,8 +226,8 @@ class PolicyEvaluator:
         if not integrity_policy.require_sha256:
             return []
 
-        # Only enforce if provenance was provided
-        if provenance and not provenance.artifact.sha256:
+        # Fail closed: require provenance and SHA256
+        if not provenance or not provenance.artifact.sha256:
             return [PolicyViolation(
                 policy_rule="integrity.require_sha256",
                 description="SHA256 hash required but not available",
@@ -223,12 +273,18 @@ class PolicyEvaluator:
             "high": vuln_policy.high,
             "medium": vuln_policy.medium,
             "low": vuln_policy.low,
+            "unknown": vuln_policy.unknown,
         }
 
         for severity, action in severity_map.items():
             # Normalize "moderate" to "medium" for OSV compatibility
-            sev_vulns = [v for v in vulnerabilities if (v.get("severity", "").lower() == severity or
-                         (severity == "medium" and v.get("severity", "").lower() == "moderate"))]
+            if severity == "unknown":
+                # Handle missing or unrecognized severity values
+                sev_vulns = [v for v in vulnerabilities if (not v.get("severity") or
+                             v.get("severity", "").lower() not in ("critical", "high", "medium", "low", "moderate"))]
+            else:
+                sev_vulns = [v for v in vulnerabilities if (v.get("severity", "").lower() == severity or
+                             (severity == "medium" and v.get("severity", "").lower() == "moderate"))]
             if sev_vulns and action == Action.BLOCK:
                 return [PolicyViolation(
                     policy_rule=f"vulnerabilities.{severity}",

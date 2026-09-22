@@ -206,6 +206,7 @@ class HTMLReport:
                     <th>Severity</th>
                     <th>Category</th>
                     <th>Message</th>
+                    <th>Path</th>
                 </tr>
             </thead>
             <tbody>
@@ -232,9 +233,10 @@ class HTMLReport:
                     <td><span class="severity-badge" style="background:{color}">{html.escape(f.severity.value)}</span></td>
                     <td>{html.escape(f.category)}</td>
                     <td>{html.escape(f.title)}</td>
+                    <td><code>{html.escape(f.artifact_path)}</code></td>
                 </tr>""")
         if not rows:
-            rows = "                <tr><td colspan=4 style='text-align:center;color:#94a3b8'>No findings</td></tr>"
+            rows = "                <tr><td colspan=5 style='text-align:center;color:#94a3b8'>No findings</td></tr>"
         return "\n".join(rows)
 
     def _build_provenance(self) -> str:

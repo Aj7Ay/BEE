@@ -45,13 +45,15 @@ class ScanOrchestrator:
 
     def scan_code_files(self, target: Path) -> list[Finding]:
         """Scan target directory for dangerous code patterns via custom_code module."""
-        scan_root = target if target.is_dir() else target.parent
-        return scan_code_directory(scan_root)
+        if not target.is_dir():
+            return []
+        return scan_code_directory(target)
 
     def scan_dependencies(self, target: Path) -> tuple[list[Dependency], list[dict]]:
         """Scan target for dependency manifests and enrich with vulnerability data."""
-        scan_root = target if target.is_dir() else target.parent
-        deps = scan_dependencies(scan_root)
+        if not target.is_dir():
+            return [], []
+        deps = scan_dependencies(target)
         return enrich_dependencies_with_vulns(deps)
 
     def scan_local(self, target: Path, workspace_dir: Path, policy: Policy | None = None) -> Run:
@@ -62,7 +64,7 @@ class ScanOrchestrator:
 
         for file_path in files:
             # Symlink check (same as scan.py)
-            scan_root = target if target.is_dir() else target.parent
+            scan_root = target if target.is_dir() else target
             escaping_target = is_escaping_symlink(file_path, scan_root)
             if escaping_target is not None:
                 findings.append(
@@ -122,14 +124,18 @@ class ScanOrchestrator:
         # Run dependency scanning via self.scan_dependencies
         enriched_deps, vuln_findings = self.scan_dependencies(target)
 
+        # Build mapping from package name to manifest path
+        pkg_to_path = {d.package: d.path for d in enriched_deps}
+
         # Convert vulnerability findings to Finding objects and add to findings
         for vuln in vuln_findings:
+            artifact_path = pkg_to_path.get(vuln.get("package", ""), "")
             vuln_finding = Finding(
                 id=f"BEE-VULN-{vuln.get('osv_id', 'UNK')[:8]}",
                 severity=self._vuln_severity_to_bee(vuln.get("severity", "unknown")),
                 title=f"Vulnerability in {vuln.get('package', '?')}",
                 description=vuln.get("description", ""),
-                artifact_path="",
+                artifact_path=artifact_path,
                 evidence=[
                     Evidence(
                         type="vulnerability",
@@ -147,6 +153,7 @@ class ScanOrchestrator:
 
         # Run policy evaluation against policy if provided
         decision_str: str | None = None
+        policy_violations_list: list[dict] = []
         if policy is not None:
             evaluator = PolicyEvaluator()
             decision_obj, policy_violations = evaluator.evaluate(
@@ -157,6 +164,7 @@ class ScanOrchestrator:
                 vulnerabilities=vuln_findings,
             )
             decision_str = decision_obj.value if decision_obj else None
+            policy_violations_list = [v.model_dump(mode="json") if hasattr(v, "model_dump") else v for v in policy_violations]
 
         run = Run.from_scan(
             target_path=str(target),
@@ -166,6 +174,7 @@ class ScanOrchestrator:
             provenance=provenance,
             vulnerabilities=vuln_findings,
             decision=decision_str,
+            policy_violations=policy_violations_list,
             license_info=license_info,
             model_card=model_card,
             dependencies=[d.model_dump(mode="json") for d in enriched_deps],

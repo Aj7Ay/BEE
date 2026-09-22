@@ -14,6 +14,7 @@ class Dependency(BaseModel):
     direct: bool = True
     license: str | None = None
     vulnerability: str | None = None
+    path: str = ""  # manifest file path where dependency was declared
 
 
 def parse_requirements_txt(path: Path) -> list[Dependency]:
@@ -30,6 +31,7 @@ def parse_requirements_txt(path: Path) -> list[Dependency]:
                 package=m.group(1),
                 version=m.group(3),
                 source="pypi",
+                path=str(path),
             ))
     return deps
 
@@ -55,6 +57,7 @@ def parse_pyproject(path: Path) -> list[Dependency]:
                     package=m.group(1),
                     version=m.group(2) or "",
                     source="pypi",
+                    path=str(path),
                 ))
     except Exception:
         pass
@@ -72,6 +75,7 @@ def parse_package_json(path: Path) -> list[Dependency]:
                     package=pkg,
                     version=version,
                     source="npm",
+                    path=str(path),
                 ))
     except Exception:
         pass
@@ -89,6 +93,7 @@ def parse_pipfile_lock(path: Path) -> list[Dependency]:
                     package=pkg,
                     version=info.get("version", "").lstrip("="),
                     source="pypi",
+                    path=str(path),
                 ))
     except Exception:
         pass
@@ -113,6 +118,7 @@ def parse_poetry_lock(path: Path) -> list[Dependency]:
                 package=pkg["name"],
                 version=pkg.get("version", ""),
                 source="pypi",
+                path=str(path),
             ))
     except Exception:
         pass
@@ -138,6 +144,7 @@ def parse_environment_yml(path: Path) -> list[Dependency]:
                     package=m.group(1),
                     version=m.group(2),
                     source="conda",
+                    path=str(path),
                 ))
     return deps
 

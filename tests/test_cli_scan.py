@@ -23,7 +23,8 @@ def test_scan_reports_gguf_bounds_finding_for_truncated_file(tmp_path, monkeypat
 
     result = runner.invoke(app, ["scan", str(target)])
 
-    assert result.exit_code == 0
+    # Fail-closed by default on critical/high findings
+    assert result.exit_code == 1
     assert "BEE-GGUF-001" in result.output
 
 
@@ -50,7 +51,8 @@ def test_scan_surfaces_critical_finding_in_text_mode(tmp_path, monkeypatch):
 
     result = runner.invoke(app, ["scan", str(target)])
 
-    assert result.exit_code == 0
+    # Fail-closed by default on critical/high findings
+    assert result.exit_code == 1
     assert "Critical/High findings:" in result.output
     assert "BEE-FMT-001" in result.output
     assert "critical" in result.output
@@ -74,7 +76,8 @@ def test_scan_continues_after_unreadable_file(tmp_path, monkeypatch):
 
     result = runner.invoke(app, ["--format", "json", "scan", str(target)])
 
-    assert result.exit_code == 0
+    # Fail-closed by default (both BEE-GGUF-001 and BEE-IO-001 are high severity)
+    assert result.exit_code == 1
     payload = json.loads(result.output)
     assert len(payload["artifacts"]) == 1
     assert payload["artifacts"][0]["path"].endswith("good.gguf")
@@ -105,7 +108,8 @@ def test_scan_single_file(tmp_path, monkeypatch):
 
     result = runner.invoke(app, ["scan", str(file_path)])
 
-    assert result.exit_code == 0
+    # Fail-closed by default on high/critical findings
+    assert result.exit_code == 1
     assert "model.gguf" in result.output
 
 
@@ -163,8 +167,9 @@ def test_scan_deterministic_produces_identical_output_across_runs(tmp_path, monk
     first = runner.invoke(app, ["--format", "json", "scan", str(target), "--deterministic"])
     second = runner.invoke(app, ["--format", "json", "scan", str(target), "--deterministic"])
 
-    assert first.exit_code == 0
-    assert second.exit_code == 0
+    # Fail-closed by default (high findings present)
+    assert first.exit_code == 1
+    assert second.exit_code == 1
     first_obj = json.loads(first.output)
     second_obj = json.loads(second.output)
     # Clear timestamp fields for comparison (microsecond drift is expected)
@@ -198,7 +203,8 @@ def test_scan_ignores_directory_named_bee_that_is_not_the_workspace(tmp_path, mo
 
     result = runner.invoke(app, ["--format", "json", "scan", str(target)])
 
-    assert result.exit_code == 0
+    # Fail-closed by default (high findings present)
+    assert result.exit_code == 1
     payload = json.loads(result.output)
     paths = [a["path"] for a in payload["artifacts"]]
     assert any("not_our_workspace.gguf" in p for p in paths)
@@ -217,7 +223,8 @@ def test_scan_reports_result_even_when_db_cannot_be_written(tmp_path, monkeypatc
 
     result = runner.invoke(app, ["--db", str(bad_db), "scan", str(target)])
 
-    assert result.exit_code == 0
+    # Fail-closed by default (high findings present)
+    assert result.exit_code == 1
     assert "BEE SCAN" in result.output
     assert "Artifacts scanned: 1" in result.output
     assert "Warning: could not save run" in result.output
@@ -233,7 +240,8 @@ def test_scan_symlink_escaping_root_is_flagged(tmp_path, monkeypatch):
 
     result = runner.invoke(app, ["--format", "json", "scan", str(target)])
 
-    assert result.exit_code == 0
+    # Fail-closed by default (BEE-SYM-001 is high severity + BEE-GGUF-001 from outside.gguf)
+    assert result.exit_code == 1
     payload = json.loads(result.output)
     finding_ids = [f["id"] for f in payload["findings"]]
     assert "BEE-SYM-001" in finding_ids
@@ -266,7 +274,8 @@ def test_scan_does_not_leak_escaping_symlink_target_content(tmp_path, monkeypatc
 
     result = runner.invoke(app, ["--format", "json", "scan", str(target)])
 
-    assert result.exit_code == 0
+    # Fail-closed by default (BEE-SYM-001 is high severity)
+    assert result.exit_code == 1
     assert real_hash not in result.output
     payload = json.loads(result.output)
     assert payload["artifacts"][0]["sha256"] == ""
@@ -282,7 +291,8 @@ def test_scan_follow_symlinks_opts_into_reading_escaping_target(tmp_path, monkey
 
     result = runner.invoke(app, ["--format", "json", "scan", str(target), "--follow-symlinks"])
 
-    assert result.exit_code == 0
+    # Fail-closed by default (BEE-SYM-001 + BEE-GGUF-001 are high severity)
+    assert result.exit_code == 1
     payload = json.loads(result.output)
     artifact = payload["artifacts"][0]
     assert artifact["sha256"] != ""
@@ -304,7 +314,8 @@ def test_scan_still_reads_symlink_content_when_target_is_inside_root(tmp_path, m
 
     result = runner.invoke(app, ["--format", "json", "scan", str(target)])
 
-    assert result.exit_code == 0
+    # Fail-closed by default (BEE-GGUF-001 is high severity)
+    assert result.exit_code == 1
     payload = json.loads(result.output)
     link_artifact = next(a for a in payload["artifacts"] if a["path"].endswith("link.gguf"))
     assert link_artifact["sha256"] != ""
@@ -327,7 +338,8 @@ def test_scan_does_not_leak_unclassified_file_content_anywhere(tmp_path, monkeyp
 
     result = runner.invoke(app, ["--format", "json", "scan", str(target)])
 
-    assert result.exit_code == 0
+    # Fail-closed by default (BEE-GGUF-001 is high severity)
+    assert result.exit_code == 1
     assert canary_hex_prefix not in result.output
     payload = json.loads(result.output)
     env_artifact = next(a for a in payload["artifacts"] if a["path"].endswith(".env"))

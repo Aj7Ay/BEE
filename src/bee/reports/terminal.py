@@ -50,6 +50,17 @@ def render_run(run: Run) -> None:
     ]
     console.print("Findings: " + ", ".join(severity_parts))
 
+    # Display policy decision and violations if present
+    if run.decision:
+        console.print()
+        decision_style = "[bold red]" if run.decision == "BLOCK" else "[bold yellow]" if run.decision == "REVIEW" else "[bold green]"
+        console.print(f"{decision_style}Decision: {run.decision}[/{decision_style.split(']')[0]}]")
+        if run.policy_violations:
+            for violation in run.policy_violations:
+                reason = violation.get("reason", "No reason provided")
+                action = violation.get("action", "unknown")
+                console.print(f"  [{action}] {reason}")
+
     # Critical/high findings are surfaced explicitly, not just folded into
     # the aggregate count above — a finding whose artifact isn't in the
     # table (e.g. an unreadable file) would otherwise be invisible.
