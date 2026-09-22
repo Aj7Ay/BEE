@@ -1,5 +1,5 @@
 
-# 🐝 BEE — AI Model Security & Supply-Chain Vetting
+# 🐝 BEE - AI Model Security & Supply-Chain Vetting
 
 <p align="center">
 <img src="banner-bee.png" alt="BEE - AI Model Security" width="900"/>
@@ -401,59 +401,6 @@ If you discover a security vulnerability in BEE, please do not create a public i
 Use GitHub's private vulnerability reporting mechanism or contact the maintainers directly.
 
 For questions, open a GitHub discussion or issue.
-
----
-
-## Roadmap — BEE 1.0+
-
-Future planned enhancements:
-
-### Provenance
-- [ ] Publisher verification
-- [ ] Repository verification
-- [ ] Provenance graph
-- [ ] Build provenance
-- [ ] Signed provenance
-
-### Model Repository Vetting
-- [ ] Hugging Face repository discovery
-- [ ] Repository-wide artifact inventory
-- [ ] Model card analysis
-- [ ] Trusted publisher policies
-
-### Code Security
-- [ ] Expanded Python AST analysis
-- [ ] JavaScript/TypeScript analysis
-- [ ] Notebook analysis
-- [ ] Data-exfiltration detection
-
-### Supply Chain
-- [ ] Expanded vulnerability sources
-- [ ] Transitive dependency graph
-- [ ] SBOM integration
-- [ ] Package integrity verification
-
-### Licensing
-- [ ] SPDX detection
-- [ ] License policy enforcement
-- [ ] Dependency license inventory
-
-### Reporting
-- [ ] Interactive dashboard
-- [ ] Model comparison
-- [ ] Security timeline
-- [ ] Evidence explorer
-
-### CI/CD & Compliance
-- [ ] GitHub Actions workflows
-- [ ] GitLab CI integration
-- [ ] Jenkins integration
-- [ ] Compliance evidence mappings (SOC 2, NIST AI RMF, ISO/IEC)
-
-### Ecosystem Integration
-- [ ] AIBOM integration
-- [ ] MCP agent workflows
-- [ ] Model registry gates
 
 ---
 
