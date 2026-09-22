@@ -1,152 +1,281 @@
-![BEE Banner](./banner-bee.png)
 
-![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)
-![Python](https://img.shields.io/badge/python-3.10%2B-brightgreen.svg)
-![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)
-![Status](https://img.shields.io/badge/status-production--grade-brightgreen.svg)
-![Tests](https://img.shields.io/badge/tests-286%20passing-brightgreen.svg)
+# 🐝 BEE — AI Model Security & Supply-Chain Vetting
 
-**BEE** is a production-ready CLI tool for comprehensive security vetting of AI/ML model artifacts. Detect malicious code, track provenance, enforce policies, and generate security reports.
+<p align="center">
+<img src="banner-bee.png" alt="BEE - AI Model Security" width="900"/>
+</p>
 
-## Features
+<p align="center">
+<strong>Scan • Verify • Vet • Evidence • Secure AI Models</strong>
+</p>
 
-### 🔍 **Security Analysis**
-- **Format Detection & Validation** - Detects SafeTensors, GGUF, Pickle, PyTorch, and more
-- **Pickle RCE Detection** - Identifies dangerous opcodes (os.system, subprocess, eval)
-- **Custom Code Scanning** - Detects os.system, subprocess, eval, network access, credential leaks, dynamic imports
-- **Dependency Analysis** - Parses requirements.txt, pyproject.toml, package.json, poetry.lock, and more
-- **Vulnerability Lookup** - Queries OSV.dev for known CVEs in dependencies
-- **Bounds Checking** - Validates tensor metadata, detects overlaps and size bombs in GGUF/SafeTensors
+<p align="center">
 
-### 📋 **Provenance & Policy**
-- **Provenance Tracking** - Records source, hash, size, acquisition method
-- **Policy Engine** - YAML-based security policies with ALLOW/REVIEW/BLOCK verdicts
-- **Fail-Closed by Default** - Critical/high findings block without explicit policy override
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://www.python.org/)
+[![License](https://img.shields.io/badge/License-Apache--2.0-green)](LICENSE)
+[![GitHub](https://img.shields.io/badge/GitHub-Aj7Ay%2FBEE-black)](https://github.com/Aj7Ay/BEE)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/Aj7Ay/BEE/releases/tag/1.0.0)
+[![Tests](https://img.shields.io/badge/tests-286%20passing-brightgreen.svg)](#testing)
 
-### 📊 **Reporting**
-- **JSON Output** - Machine-readable verdicts for automation
-- **HTML Reports** - Dark-themed security reports with detailed findings
-- **Model Cards** - BEE-compliant README.md generation from scans
-- **Terminal Output** - Rich, color-coded scan summaries
+</p>
 
-## Installation
+---
 
-```bash
-pip install bee-guard
-# or with uv
-uv pip install bee-guard
+## What is BEE?
+
+**BEE** is an open-source security tool for vetting AI/ML model artifacts before they enter development, CI/CD pipelines, model registries, or production environments.
+
+BEE analyzes model artifacts for:
+
+- **Malicious serialization** (pickle RCE, dangerous opcodes)
+- **Format violations** (GGUF/SafeTensors bounds, overlaps, tensor misalignment)
+- **Custom code security** (os.system, subprocess, eval, network access)
+- **Vulnerable dependencies** (OSV.dev integration, CVE lookup)
+- **Artifact integrity** (SHA-256 hashing, Ed25519 signatures)
+- **Provenance tracking** (source, repository, revision, acquisition method)
+- **Policy enforcement** (YAML-based ALLOW/REVIEW/BLOCK gates)
+
+BEE produces **machine-readable security evidence** (JSON) and human-readable reports (HTML, terminal) that can be used in CI/CD and AI model supply-chain workflows.
+
+> **BEE doesn't create trust. BEE helps you verify trust.**
+
+---
+
+## Why BEE?
+
+AI models are software supply-chain artifacts.
+
+A model repository can contain much more than model weights:
+
+```
+AI Model Repository
+│
+├── model.safetensors
+├── model.gguf
+├── pytorch_model.bin
+├── config.json
+├── tokenizer.json
+├── modeling_custom.py
+├── requirements.txt
+├── pyproject.toml
+├── LICENSE
+└── README.md
 ```
 
-## Quick Start
+A model can therefore introduce risk through serialization, format, custom code, dependencies, provenance, and integrity.
 
-### 1. Scan a Model File
+BEE helps security and engineering teams inspect these components before deployment.
 
-```bash
-# Scan a single file
-bee scan model.gguf
+---
 
-# Scan a directory recursively
-bee scan ./models/
+## Core Security Features
 
-# Get JSON output for downstream tools
-bee --format json scan model.safetensors
+### 🔍 Format Detection & Bounds Checking
+
+- GGUF: magic/version, tensor table, offsets, alignment, byte-size, quantization
+- SafeTensors: tensor ranges, out-of-bounds data, overlaps, shape/size mismatches
+- Pickle: opcode analysis, dangerous callable detection
+- PyTorch, ONNX, NumPy, HDF5/Keras, archives
+- Format mismatch detection (doesn't trust file extensions)
+
+### 💀 Pickle Security
+
+Detects dangerous behavior without executing:
+
+```
+os.system
+subprocess
+eval / exec
+dangerous callable reconstruction
+suspicious opcode patterns
+all pickle protocol versions (0-5)
+evasion techniques (trailing bytes, opcode-cap padding, memo indirection)
 ```
 
-### 2. Vet with Security Gate
+### 🧱 Tensor Validation
 
-```bash
-# Vet and apply policy
-bee vet --policy security-policy.yaml model.gguf
+- Tensor overlap detection
+- Out-of-bounds access
+- Implausible dimensions
+- Size/resource exhaustion
+- Declared-size bombs
 
-# Fail on high/critical findings
-bee vet model.gguf --fail-on high
+### 💻 Custom Code Analysis
+
+Scans for security-sensitive patterns:
+
+```
+os.system, subprocess, eval, exec
+network access (requests, urllib, socket)
+environment/credential access
+dynamic imports
+file operations
+download-and-execute patterns
 ```
 
-### 3. Generate Reports
+### 📦 Dependency Analysis
 
-```bash
-# Generate HTML report
-bee report --scan model.gguf -o security-report.html
+- Parses: requirements.txt, pyproject.toml, package.json, poetry.lock, Pipfile.lock, environment.yml
+- Identifies: package, version, source, direct/transitive relationships
+- Enriches with OSV.dev vulnerability lookup (when network available)
 
-# Generate model card from scan
-bee modelcard --scan model.gguf -o README.md
+### 🔐 Artifact Integrity
+
+- SHA-256 hashing
+- Ed25519 digital signatures
+- Tamper detection
+- Signature verification with key pinning
+
+### 📋 Provenance Tracking
+
+Records and validates:
+
+```json
+{
+  "source": {
+    "provider": "huggingface",
+    "repository": "organization/model",
+    "revision": "abc123"
+  },
+  "artifact": {
+    "filename": "model.safetensors",
+    "sha256": "...",
+    "size": 5242880
+  }
+}
 ```
 
-### 4. Validate Policies
+### 🛡️ Policy Enforcement
 
-```bash
-# Check policy YAML syntax
-bee policy security-policy.yaml
-```
-
-## Commands
-
-| Command | Purpose |
-|---------|---------|
-| `bee scan <target>` | Scan model files for security issues |
-| `bee inspect <target>` | Inspect model artifact metadata |
-| `bee vet <target>` | Full security vetting with policy support |
-| `bee report <target>` | Generate HTML security report |
-| `bee modelcard <target>` | Generate BEE-compliant model card |
-| `bee policy <file>` | Validate security policy YAML |
-| `bee verify <file>` | Verify signed model files |
-| `bee sign <file>` | Digitally sign model artifacts |
-| `bee keygen` | Generate signing keypair |
-| `bee history <target>` | Show scan history from database |
-| `bee show <run-id>` | Display scan results by ID |
-| `bee ollama vet <model>` | Vet local Ollama models (experimental) |
-
-## Policy Example
+YAML-based security policies with fail-closed defaults:
 
 ```yaml
-integrity:
-  require_sha256: true
-
-provenance:
-  require_publisher: false
-  require_repository: false
-  require_revision: false
-
-formats:
-  blocked: ["pickle"]
-
 findings:
   critical: block
   high: block
   medium: review
   low: allow
-  info: allow
 
-custom_code:
-  allowed: true
-
-licenses:
-  allowed: ["MIT", "Apache-2.0"]
+formats:
+  blocked:
+    - pickle
 
 vulnerabilities:
   critical: block
   high: block
-  medium: allow
-  low: allow
 ```
 
-Save as `policy.yaml` and use:
+Decisions: **ALLOW** | **REVIEW** | **BLOCK**
+
+### 🐳 Remote Model Vetting
+
+- **Ollama**: Vet local Ollama models (`bee ollama vet qwen3:8b`)
+- **HuggingFace**: Scan models from the Hub (`bee hf meta-llama/Llama-2-7b`)
+- Filename validation (rejects path traversal, absolute paths)
+
+### 📊 Security Reports
+
+- **JSON**: Machine-readable evidence for automation, CI/CD, AIBOM
+- **HTML**: Dark-themed security report with findings, severity, evidence
+- **Model Cards**: BEE-compliant README.md generation
+- **Terminal**: Color-coded output with findings summary
+
+---
+
+## Installation
+
+### PyPI
+
 ```bash
-bee vet --policy policy.yaml model.gguf
+pip install bee-guard
 ```
 
-## Threat Model
+### uv
 
-BEE detects and prevents:
+```bash
+uv pip install bee-guard
+```
 
-| Threat | Detection | Prevention |
-|--------|-----------|-----------|
-| **Malicious Pickle** | Opcode analysis (os.system, subprocess, eval) | BLOCK by format |
-| **Size Bombs** | Bounds checking, overlap detection | BLOCK on mismatch |
-| **Vulnerable Dependencies** | OSV.dev lookup | BLOCK on critical |
-| **Dangerous Code** | Pattern scanning (20+ patterns) | BLOCK by policy |
-| **Tampered Artifacts** | SHA-256 validation, signature verification | BLOCK on mismatch |
-| **Unknown Provenance** | Source tracking, publisher verification | REVIEW without policy |
+### From source
+
+```bash
+git clone https://github.com/Aj7Ay/BEE.git
+cd BEE
+uv sync
+```
+
+Verify:
+
+```bash
+bee --version
+```
+
+---
+
+## Quick Start
+
+### Scan a model
+
+```bash
+bee scan model.gguf
+bee scan ./models/
+```
+
+### Full vetting with policy
+
+```bash
+bee vet --policy security.yaml model.gguf
+```
+
+### Vet remote models
+
+```bash
+bee hf meta-llama/Llama-2-7b
+bee ollama vet qwen3:8b
+```
+
+### Generate reports
+
+```bash
+# JSON for automation
+bee --format json vet model.gguf
+
+# HTML report
+bee report --scan model.gguf -o security-report.html
+
+# Model card
+bee modelcard --scan model.gguf -o README.md
+```
+
+### Sign and verify
+
+```bash
+bee keygen              # Generate signing key
+bee sign model.gguf     # Sign artifact
+bee verify model.gguf   # Verify signature
+```
+
+---
+
+## CLI Commands
+
+| Command | Purpose |
+|---------|---------|
+| `bee scan <target>` | Scan model artifacts |
+| `bee inspect <target>` | Inspect model metadata |
+| `bee vet <target>` | Full security vetting |
+| `bee report <target>` | Generate HTML security report |
+| `bee modelcard <target>` | Generate BEE model card |
+| `bee policy <file>` | Validate security policy |
+| `bee verify <file>` | Verify signed artifacts |
+| `bee sign <file>` | Sign artifacts/evidence |
+| `bee keygen` | Generate signing keys |
+| `bee history <target>` | Show scan history |
+| `bee show <run-id>` | Display scan results |
+| `bee ollama vet <model>` | Vet a local Ollama model |
+| `bee hf <org/model>` | Vet a HuggingFace model |
+
+---
 
 ## Exit Codes
 
@@ -154,23 +283,43 @@ BEE detects and prevents:
 |------|---------|
 | `0` | Scan complete, no blocking issues |
 | `1` | Security findings at threshold level |
-| `2` | Usage error (missing file, bad policy, etc.) |
+| `2` | Usage error (missing file, bad policy) |
 
-## Output Formats
+---
 
-### JSON Mode
+## Threat Model
+
+BEE addresses AI model supply-chain threats:
+
+| Threat | Detection | Action |
+|--------|-----------|--------|
+| Malicious Pickle | Opcode analysis | BLOCK |
+| GGUF tensor overlap | Structural analysis | BLOCK |
+| Tensor size bombs | Bounds checking | BLOCK |
+| SafeTensors overlap | Bounds checking | BLOCK |
+| Dangerous custom code | Static code analysis | REVIEW/BLOCK |
+| Vulnerable dependencies | OSV lookup | REVIEW/BLOCK |
+| Artifact tampering | SHA-256/signatures | BLOCK |
+| Unknown provenance | Provenance analysis | REVIEW |
+| Format mismatch | Format validation | REVIEW/BLOCK |
+
+---
+
+## Machine-Readable Evidence
+
 ```bash
 bee --format json vet model.gguf
 ```
 
-Returns:
+JSON output includes:
+
 ```json
 {
   "id": "run-abc123",
   "target": "model.gguf",
   "verdict": "allow",
   "decision": "allow",
-  "findings": [...],
+  "findings": [],
   "severity_count": {
     "critical": 0,
     "high": 0,
@@ -178,55 +327,169 @@ Returns:
     "low": 0,
     "info": 0
   },
-  "provenance": {...},
+  "provenance": {},
   "timestamp": "2026-09-22T15:30:00Z"
 }
 ```
 
-### Text Mode (default)
-```
-BEE SCAN
-Target: model.gguf
-Artifacts scanned: 1
-┏━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━┳━━━━━━━━━━┓
-┃ PATH          ┃ FORMAT ┃ SIZE ┃ FINDINGS ┃
-┡━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━╇━━━━━━━━━━┩
-│ model.gguf    │ gguf   │ 5.2G │ -        │
-└───────────────┴────────┴──────┴──────────┘
-Findings: 0 critical, 0 high, 0 medium, 0 low, 0 info
-```
-
-## Development
-
-### Install from source
-```bash
-git clone https://github.com/Aj7Ay/BEE.git
-cd BEE
-uv install
-```
-
-### Run tests
-```bash
-uv run pytest
-```
-
-### Run linting
-```bash
-uv run ruff check src/
-```
-
-## License
-
-Apache License 2.0 — see LICENSE file
-
-## Contributing
-
-We welcome contributions. Please open an issue or submit a pull request on [GitHub](https://github.com/Aj7Ay/BEE).
-
-## Security
-
-Report security vulnerabilities to [security@example.com](mailto:security@example.com). Do not open public issues for security bugs.
+Consumed by: CI/CD, AIBOM, security platforms, compliance workflows.
 
 ---
 
-**BEE**: Because model safety is not optional.
+## What BEE Does NOT Claim
+
+A result of `0 findings` means:
+
+> No issue was detected by the configured BEE checks.
+
+It does **not** mean the model is universally safe.
+
+Complete model security requires:
+
+- Publisher verification
+- Provenance verification
+- Human review
+- Model behavior testing
+- Runtime isolation
+- Access control
+- Monitoring
+- Organizational policy
+
+**BEE is one layer of a defense-in-depth AI security architecture.**
+
+---
+
+## Testing
+
+```bash
+uv sync
+uv run pytest
+uv run ruff check src/
+```
+
+BEE's test suite includes 286+ tests covering:
+
+- Adversarial model fixtures
+- Malformed structures
+- Evasion techniques
+- Integration paths
+- Policy logic
+- Full regression
+
+---
+
+## Contributing
+
+Contributions welcome in:
+
+- New model-format analyzers
+- Security test fixtures
+- Parser hardening
+- Fuzzing
+- Provenance integrations
+- Policy rules
+- Vulnerability integrations
+- CI/CD integrations
+- Documentation
+
+---
+
+## Security
+
+If you discover a security vulnerability in BEE, please do not create a public issue.
+
+Use GitHub's private vulnerability reporting mechanism or contact the maintainers directly.
+
+For questions, open a GitHub discussion or issue.
+
+---
+
+## Roadmap — BEE 1.0+
+
+Future planned enhancements:
+
+### Provenance
+- [ ] Publisher verification
+- [ ] Repository verification
+- [ ] Provenance graph
+- [ ] Build provenance
+- [ ] Signed provenance
+
+### Model Repository Vetting
+- [ ] Hugging Face repository discovery
+- [ ] Repository-wide artifact inventory
+- [ ] Model card analysis
+- [ ] Trusted publisher policies
+
+### Code Security
+- [ ] Expanded Python AST analysis
+- [ ] JavaScript/TypeScript analysis
+- [ ] Notebook analysis
+- [ ] Data-exfiltration detection
+
+### Supply Chain
+- [ ] Expanded vulnerability sources
+- [ ] Transitive dependency graph
+- [ ] SBOM integration
+- [ ] Package integrity verification
+
+### Licensing
+- [ ] SPDX detection
+- [ ] License policy enforcement
+- [ ] Dependency license inventory
+
+### Reporting
+- [ ] Interactive dashboard
+- [ ] Model comparison
+- [ ] Security timeline
+- [ ] Evidence explorer
+
+### CI/CD & Compliance
+- [ ] GitHub Actions workflows
+- [ ] GitLab CI integration
+- [ ] Jenkins integration
+- [ ] Compliance evidence mappings (SOC 2, NIST AI RMF, ISO/IEC)
+
+### Ecosystem Integration
+- [ ] AIBOM integration
+- [ ] MCP agent workflows
+- [ ] Model registry gates
+
+---
+
+## License
+
+Apache License 2.0
+
+See [LICENSE](LICENSE).
+
+---
+
+## Philosophy
+
+AI models are becoming software supply-chain artifacts.
+
+They should be:
+
+```
+Discovered
+    ↓
+Identified
+    ↓
+Analyzed
+    ↓
+Verified
+    ↓
+Vetted
+    ↓
+Documented
+    ↓
+Policy Checked
+    ↓
+Audited
+```
+
+Not blindly downloaded and deployed.
+
+> **BEE — Scan. Verify. Vet. Secure AI Models.**
+
