@@ -58,7 +58,17 @@ def vet_command(
     policy_obj = None
     if policy:
         from bee.policy.loader import load_policy
-        policy_obj = load_policy(policy)
+        try:
+            policy_obj = load_policy(policy)
+        except FileNotFoundError:
+            typer.echo(f"Error: policy file not found: {policy}", err=True)
+            raise typer.Exit(code=2)
+        except ValueError as e:
+            typer.echo(f"Error: invalid policy file: {e}", err=True)
+            raise typer.Exit(code=2)
+        except Exception as e:
+            typer.echo(f"Error: could not load policy {policy}: {e}", err=True)
+            raise typer.Exit(code=2)
 
     config = ScanConfig(
         fail_on=fail_on,
@@ -84,7 +94,18 @@ def vet_command(
     if state.output_format is OutputFormat.JSON:
         import json as jsonlib
         output_dict = run_result.model_dump(mode="json")
-        output_dict["verdict"] = run_result.decision or "allow"
+        # Verdict: use policy decision if set, else derive from severity (fail-closed)
+        if run_result.decision:
+            verdict = run_result.decision
+        else:
+            # No policy: default to fail-closed based on findings severity
+            if run_result.severity_count(Severity.CRITICAL) > 0 or run_result.severity_count(Severity.HIGH) > 0:
+                verdict = "block"
+            elif run_result.severity_count(Severity.MEDIUM) > 0:
+                verdict = "review"
+            else:
+                verdict = "allow"
+        output_dict["verdict"] = verdict
         typer.echo(jsonlib.dumps(output_dict, indent=2))
     else:
         from bee.reports.terminal import render_run
