@@ -122,6 +122,25 @@ class ScanOrchestrator:
         # Run dependency scanning via self.scan_dependencies
         enriched_deps, vuln_findings = self.scan_dependencies(target)
 
+        # Convert vulnerability findings to Finding objects and add to findings
+        for vuln in vuln_findings:
+            vuln_finding = Finding(
+                id=f"BEE-VULN-{vuln.get('osv_id', 'UNK')[:8]}",
+                severity=self._vuln_severity_to_bee(vuln.get("severity", "unknown")),
+                title=f"Vulnerability in {vuln.get('package', '?')}",
+                description=vuln.get("description", ""),
+                artifact_path="",
+                evidence=[
+                    Evidence(
+                        type="vulnerability",
+                        value=vuln.get("cve_id") or vuln.get("osv_id", ""),
+                        source="osv",
+                        confidence=Confidence.VERIFIED,
+                    ),
+                ],
+            )
+            findings.append(vuln_finding)
+
         # License and model card scanning
         license_info = self._scan_license(target)
         model_card = self._scan_model_card(target)
@@ -278,6 +297,20 @@ class ScanOrchestrator:
             from bee.evidence.model_card import parse_model_card
             return parse_model_card(readme)
         return None
+
+    def _vuln_severity_to_bee(self, severity: str) -> Severity:
+        """Map OSV/CVE severity to BEE Severity."""
+        severity_lower = str(severity).lower()
+        if severity_lower == "critical":
+            return Severity.CRITICAL
+        elif severity_lower == "high":
+            return Severity.HIGH
+        elif severity_lower == "medium":
+            return Severity.MEDIUM
+        elif severity_lower == "low":
+            return Severity.LOW
+        else:
+            return Severity.INFO
 
     def _build_local_provenance(self, target: Path, artifacts: list[Artifact]) -> Provenance:
         """Build best-effort provenance for a local scan."""
