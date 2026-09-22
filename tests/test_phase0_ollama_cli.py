@@ -1,4 +1,7 @@
-"""Phase 0: test bee ollama command does not crash (placeholder stage)."""
+"""Tests for bee ollama command."""
+
+from pathlib import Path
+from unittest.mock import patch, MagicMock
 
 from typer.testing import CliRunner
 
@@ -15,12 +18,13 @@ def test_ollama_vet_with_no_model_fails():
     assert "required" in result.output.lower() or "model" in result.output.lower()
 
 
-def test_ollama_vet_with_model_shows_placeholder():
-    """bee ollama vet with a model name must exit 0 and show not-implemented."""
+def test_ollama_vet_with_model_when_ollama_unavailable():
+    """bee ollama vet exits 1 when Ollama is not running."""
+    # This test verifies graceful error handling when Ollama is unreachable
     result = runner.invoke(app, ["ollama", "vet", "qwen3:8b"])
 
-    assert result.exit_code == 0
-    assert "not yet implemented" in result.output.lower()
+    # Should exit with error since Ollama is not running
+    assert result.exit_code != 0
 
 
 def test_ollama_unknown_action_fails():
