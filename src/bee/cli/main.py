@@ -5,6 +5,7 @@ from pathlib import Path
 import typer
 
 from bee import __version__
+from bee.cli.banner import show_banner
 from bee.cli.history import history_command
 from bee.cli.huggingface import huggingface_command
 from bee.cli.init import init_command
