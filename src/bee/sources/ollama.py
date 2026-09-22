@@ -69,16 +69,12 @@ class OllamaSource(Source):
         """Download model file from Ollama library and return local path."""
         self._temp_dir = Path(tempfile.mkdtemp(prefix="bee_ollama_"))
 
-        info = self.inspect_model(self._model_name)
-        if not info:
-            return []
-
         artifacts: list[Path] = []
 
         try:
             resp = requests.post(
                 f"{self.base_url}/api/show",
-                json={"name": self._model_name},
+                json={"name": self._raw_name},
                 timeout=30,
             )
             resp.raise_for_status()
@@ -96,17 +92,22 @@ class OllamaSource(Source):
                             from_path = parts[1].strip()
                             # Check if it's a blob path (contains /blobs/ and a valid blob ref)
                             if "/blobs/" in from_path:
-                                # Extract blob ref from path like .../blobs/sha256-...
-                                try:
-                                    blob_ref = from_path.split("/blobs/")[-1]
-                                    if self._is_safe_blob_ref(blob_ref):
-                                        # Construct full blob path
-                                        ollama_dir = Path(os.environ.get("OLLAMA_MODELS", Path.home() / ".ollama" / "models"))
-                                        blob_path = ollama_dir / "blobs" / blob_ref
-                                        if blob_path.is_file():
-                                            artifacts.append(blob_path)
-                                except (IndexError, ValueError):
-                                    pass
+                                # Try to use the FROM path directly if it exists and is safe
+                                blob_path = Path(from_path)
+                                if blob_path.is_file():
+                                    artifacts.append(blob_path)
+                                else:
+                                    # Extract blob ref and try standard locations
+                                    try:
+                                        blob_ref = from_path.split("/blobs/")[-1]
+                                        if self._is_safe_blob_ref(blob_ref):
+                                            # Try standard Ollama locations
+                                            ollama_dir = Path(os.environ.get("OLLAMA_MODELS", Path.home() / ".ollama" / "models"))
+                                            blob_path = ollama_dir / "blobs" / blob_ref
+                                            if blob_path.is_file():
+                                                artifacts.append(blob_path)
+                                    except (IndexError, ValueError):
+                                        pass
 
                     # Parse ADD directives (e.g., ADD sha256-... blob)
                     elif line.startswith("ADD") and "blob" in line:
@@ -127,7 +128,7 @@ class OllamaSource(Source):
             try:
                 requests.post(
                     f"{self.base_url}/api/pull",
-                    json={"name": self._model_name},
+                    json={"name": self._raw_name},
                     timeout=300,
                 )
 
@@ -146,18 +147,18 @@ class OllamaSource(Source):
     def get_source_info(self) -> dict:
         return {
             "provider": "ollama",
-            "repository": self._model_name,
+            "repository": self._raw_name,
             "revision": None,
         }
 
     def get_model_card(self) -> dict | None:
         """Extract model info from Ollama metadata."""
-        info = self.inspect_model(self._model_name)
+        info = self.inspect_model(self._raw_name)
         if not info:
             return None
 
         return {
-            "model_name": self._model_name,
+            "model_name": self._raw_name,
             "parameters": info.get("parameters", ""),
             "format": info.get("format", ""),
             "family": info.get("details", {}).get("family", ""),
