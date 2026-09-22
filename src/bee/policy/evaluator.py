@@ -48,11 +48,12 @@ class PolicyEvaluator:
         provenance: Provenance | None,
         license_info: dict | None = None,
         vulnerabilities: list[dict] | None = None,
+        artifacts: list | None = None,
     ) -> tuple[Decision, list[PolicyViolation]]:
         """Evaluate findings against policy. Returns (decision, violations)."""
         violations: list[PolicyViolation] = []
 
-        violations.extend(self._check_formats(findings, policy.formats, policy.findings))
+        violations.extend(self._check_formats(findings, policy.formats, policy.findings, artifacts))
         violations.extend(self._check_findings(findings, policy.findings))
         violations.extend(self._check_code(findings, policy.custom_code))
         violations.extend(self._check_provenance(provenance, policy))
@@ -66,70 +67,91 @@ class PolicyEvaluator:
         return decision, violations
 
     def _check_formats(
-        self, findings: list[Finding], fmt_policy: FormatPolicy, findings_policy: FindingPolicy = None
+        self, findings: list[Finding], fmt_policy: FormatPolicy, findings_policy: FindingPolicy = None, artifacts: list | None = None
     ) -> list[PolicyViolation]:
         # Only enforce format blocking if formats are actually configured in policy
         if not fmt_policy.blocked:
             return []
 
-        format_findings = [f for f in findings if f.id == "BEE-FMT-001"]
-        if not format_findings:
-            return []
+        violations = []
 
-        # Extract detected formats and check if they are in the blocked list
-        blocked_findings = []
-        for finding in format_findings:
-            # Extract detected_format from evidence (type "detected_format")
-            detected_format = None
-            for evidence in finding.evidence:
-                if evidence.type == "detected_format":
-                    detected_format = evidence.value
-                    break
+        # Problem A: Check detected_format of every artifact, not just those with BEE-FMT-001
+        # This catches correctly-labeled blocked formats (e.g., pickle.pkl with no mismatch finding)
+        if artifacts:
+            blocked_artifacts = []
+            for artifact in artifacts:
+                if hasattr(artifact, 'detected_format') and artifact.detected_format in fmt_policy.blocked:
+                    blocked_artifacts.append(artifact)
 
-            # Only block if the detected format is in the blocked list
-            if detected_format and detected_format in fmt_policy.blocked:
-                blocked_findings.append(finding)
-
-        if blocked_findings:
-            # Determine worst action based on finding severities using findings policy
-            worst_action = Action.ALLOW
-            for finding in blocked_findings:
-                if findings_policy:
-                    # Use findings policy to determine action for this severity
-                    if finding.severity == Severity.CRITICAL:
-                        action = findings_policy.critical
-                    elif finding.severity == Severity.HIGH:
-                        action = findings_policy.high
-                    elif finding.severity == Severity.MEDIUM:
-                        action = findings_policy.medium
-                    elif finding.severity == Severity.LOW:
-                        action = findings_policy.low
-                    else:  # INFO
-                        action = findings_policy.info
-                else:
-                    # Fallback: CRITICAL/HIGH -> BLOCK, MEDIUM -> REVIEW, LOW/INFO -> ALLOW
-                    if finding.severity in (Severity.CRITICAL, Severity.HIGH):
-                        action = Action.BLOCK
-                    elif finding.severity == Severity.MEDIUM:
-                        action = Action.REVIEW
-                    else:
-                        action = Action.ALLOW
-
-                # Track worst action (BLOCK > REVIEW > ALLOW)
-                if action == Action.BLOCK:
-                    worst_action = Action.BLOCK
-                    break
-                elif action == Action.REVIEW and worst_action != Action.BLOCK:
-                    worst_action = Action.REVIEW
-
-            # Only return violation if there's an actual violation (not ALLOW)
-            if worst_action != Action.ALLOW:
-                return [PolicyViolation(
+            if blocked_artifacts:
+                # Problem B: Treat blocked format as a standalone policy decision, not routed through findings_policy
+                # Always block regardless of findings policy settings
+                violations.append(PolicyViolation(
                     policy_rule="formats.blocked",
-                    description=f"Format mismatch detected ({len(blocked_findings)} finding(s)) — file may be mislabeled or tampered",
-                    action=worst_action,
-                )]
-        return []
+                    description=f"{len(blocked_artifacts)} blocked format(s) detected ({', '.join(set(a.detected_format for a in blocked_artifacts))})",
+                    action=Action.BLOCK,
+                ))
+
+        # Keep existing BEE-FMT-001 handling for backward compatibility and mismatch-specific findings
+        format_findings = [f for f in findings if f.id == "BEE-FMT-001"]
+        if format_findings:
+            # Extract detected formats and check if they are in the blocked list
+            mismatch_blocked_findings = []
+            for finding in format_findings:
+                # Extract detected_format from evidence (type "detected_format")
+                detected_format = None
+                for evidence in finding.evidence:
+                    if evidence.type == "detected_format":
+                        detected_format = evidence.value
+                        break
+
+                # Only check if the detected format is in the blocked list
+                if detected_format and detected_format in fmt_policy.blocked:
+                    mismatch_blocked_findings.append(finding)
+
+            # For mismatch findings with blocked formats, route through findings policy
+            # (preserves backward compatibility with existing tests)
+            if mismatch_blocked_findings:
+                worst_action = Action.ALLOW
+                for finding in mismatch_blocked_findings:
+                    if findings_policy:
+                        # Use findings policy to determine action for this severity
+                        if finding.severity == Severity.CRITICAL:
+                            action = findings_policy.critical
+                        elif finding.severity == Severity.HIGH:
+                            action = findings_policy.high
+                        elif finding.severity == Severity.MEDIUM:
+                            action = findings_policy.medium
+                        elif finding.severity == Severity.LOW:
+                            action = findings_policy.low
+                        else:  # INFO
+                            action = findings_policy.info
+                    else:
+                        # Fallback: CRITICAL/HIGH -> BLOCK, MEDIUM -> REVIEW, LOW/INFO -> ALLOW
+                        if finding.severity in (Severity.CRITICAL, Severity.HIGH):
+                            action = Action.BLOCK
+                        elif finding.severity == Severity.MEDIUM:
+                            action = Action.REVIEW
+                        else:
+                            action = Action.ALLOW
+
+                    # Track worst action (BLOCK > REVIEW > ALLOW)
+                    if action == Action.BLOCK:
+                        worst_action = Action.BLOCK
+                        break
+                    elif action == Action.REVIEW and worst_action != Action.BLOCK:
+                        worst_action = Action.REVIEW
+
+                # Only return violation if there's an actual violation (not ALLOW)
+                # But don't duplicate if we already have a violation from artifact check
+                if worst_action != Action.ALLOW and not violations:
+                    violations.append(PolicyViolation(
+                        policy_rule="formats.blocked",
+                        description=f"Format mismatch detected ({len(mismatch_blocked_findings)} finding(s)) — file may be mislabeled or tampered",
+                        action=worst_action,
+                    ))
+
+        return violations
 
     def _check_findings(
         self, findings: list[Finding], policy: FindingPolicy

@@ -162,6 +162,7 @@ class ScanOrchestrator:
                 provenance=provenance,
                 license_info=license_info,
                 vulnerabilities=vuln_findings,
+                artifacts=artifacts,
             )
             decision_str = decision_obj.value if decision_obj else None
             policy_violations_list = [v.model_dump(mode="json") if hasattr(v, "model_dump") else v for v in policy_violations]
@@ -280,6 +281,7 @@ class ScanOrchestrator:
                 provenance=provenance,
                 license_info=run.license_info,
                 vulnerabilities=[],
+                artifacts=artifact_objs,
             )
             if policy_violations:
                 run.decision = Decision.BLOCK if any(v.action == "block" for v in policy_violations) else Decision.REVIEW if any(v.action == "review" for v in policy_violations) else Decision.ALLOW

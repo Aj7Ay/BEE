@@ -1,8 +1,16 @@
 """Unit tests for policy evaluator verdict logic."""
 
+from dataclasses import dataclass
 from bee.evidence.finding import Finding, Severity, Evidence, Confidence
 from bee.policy.rules import Policy, FindingPolicy, IntegrityPolicy, FormatPolicy, VulnerabilityPolicy, Action
 from bee.policy.evaluator import PolicyEvaluator
+
+
+@dataclass
+class MockArtifact:
+    """Mock artifact for testing."""
+    detected_format: str
+    path: str
 
 
 def test_evaluator_blocks_on_critical_finding():
@@ -282,5 +290,69 @@ def test_issue_6_integrity_require_sha256_fail_closed():
     _, violations = evaluator.evaluate(policy, [], None, None, [])
     
     assert any(v.policy_rule == "integrity.require_sha256" and v.action == Action.BLOCK for v in violations), "Missing provenance should block when sha256 required"
+
+
+def test_problem_a_correctly_labeled_blocked_format():
+    """Problem A: formats.blocked should catch correctly-labeled blocked formats (no BEE-FMT-001).
+
+    A pickle file with correct extension (pickle.pkl) produces no BEE-FMT-001 finding,
+    but detected_format is still "pickle". The artifact check should catch this.
+    """
+    policy = Policy(
+        formats=FormatPolicy(blocked=["pickle"]),
+        findings=FindingPolicy(critical=Action.BLOCK, high=Action.BLOCK, medium=Action.REVIEW, low=Action.ALLOW),
+        integrity=IntegrityPolicy(require_sha256=False)
+    )
+
+    # No BEE-FMT-001 finding (correctly labeled), but artifact has detected_format="pickle"
+    artifact = MockArtifact(detected_format="pickle", path="weights.pkl")
+
+    evaluator = PolicyEvaluator()
+    _, violations = evaluator.evaluate(policy, [], None, None, [], artifacts=[artifact])
+
+    # Should block due to detected_format being in blocked list
+    assert any(v.policy_rule == "formats.blocked" and v.action == Action.BLOCK for v in violations), \
+        "Correctly-labeled pickle should be blocked via artifact detection"
+
+
+def test_problem_b_blocked_format_not_overridden_by_findings_policy():
+    """Problem B: formats.blocked should not be overridden by findings_policy (e.g., low: allow).
+
+    Even if findings.low: allow is set, blocked formats should always block.
+    """
+    policy = Policy(
+        formats=FormatPolicy(blocked=["pickle"]),
+        findings=FindingPolicy(critical=Action.BLOCK, high=Action.BLOCK, medium=Action.REVIEW, low=Action.ALLOW),
+        integrity=IntegrityPolicy(require_sha256=False)
+    )
+
+    # Correctly-labeled pickle artifact
+    artifact = MockArtifact(detected_format="pickle", path="weights.pkl")
+
+    evaluator = PolicyEvaluator()
+    _, violations = evaluator.evaluate(policy, [], None, None, [], artifacts=[artifact])
+
+    # Should block despite findings.low: allow, because blocked format is a standalone decision
+    assert any(v.policy_rule == "formats.blocked" and v.action == Action.BLOCK for v in violations), \
+        "Blocked format should not be overridden by findings policy"
+
+
+def test_non_blocked_formats_still_allowed():
+    """Non-blocked formats should not trigger violations."""
+    policy = Policy(
+        formats=FormatPolicy(blocked=["pickle"]),
+        findings=FindingPolicy(critical=Action.BLOCK, high=Action.BLOCK, medium=Action.REVIEW, low=Action.ALLOW),
+        integrity=IntegrityPolicy(require_sha256=False)
+    )
+
+    # Safetensors is not in blocked list
+    artifact = MockArtifact(detected_format="safetensors", path="weights.safetensors")
+
+    evaluator = PolicyEvaluator()
+    _, violations = evaluator.evaluate(policy, [], None, None, [], artifacts=[artifact])
+
+    # Should not block
+    assert not any(v.policy_rule == "formats.blocked" for v in violations), \
+        "Non-blocked format should be allowed"
 
 
