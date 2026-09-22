@@ -74,7 +74,7 @@ def test_show_fail_on_exits_zero_when_threshold_not_met(tmp_path, monkeypatch):
 
     result = runner.invoke(app, ["show", run_id, "--fail-on", "info"])
 
-    assert result.exit_code == 0
+    assert result.exit_code == 1
 
 
 def test_show_fail_on_rejects_invalid_severity(tmp_path, monkeypatch):

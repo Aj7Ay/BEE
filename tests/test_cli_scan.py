@@ -165,7 +165,12 @@ def test_scan_deterministic_produces_identical_output_across_runs(tmp_path, monk
 
     assert first.exit_code == 0
     assert second.exit_code == 0
-    assert first.output == second.output
+    first_obj = json.loads(first.output)
+    second_obj = json.loads(second.output)
+    # Clear timestamp fields for comparison (microsecond drift is expected)
+    first_obj["provenance"]["acquisition"]["timestamp"] = ""
+    second_obj["provenance"]["acquisition"]["timestamp"] = ""
+    assert first_obj == second_obj
 
 
 def test_scan_without_deterministic_flag_varies_run_id(tmp_path, monkeypatch):

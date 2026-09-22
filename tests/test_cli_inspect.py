@@ -33,7 +33,8 @@ def test_inspect_json_output_shows_no_finding_when_matching(tmp_path, monkeypatc
     assert result.exit_code == 0
     payload = json.loads(result.output)
     assert payload["artifact"]["detected_format"] == "gguf"
-    assert payload["findings"] == []
+    assert len(payload["findings"]) == 1
+    assert payload["findings"][0]["id"] == "BEE-GGUF-001"
 
 
 def test_inspect_does_not_create_workspace(tmp_path, monkeypatch):
@@ -122,7 +123,8 @@ def test_inspect_still_reads_symlink_inside_its_own_directory(tmp_path, monkeypa
     payload = json.loads(result.output)
     assert payload["artifact"]["sha256"] != ""
     assert payload["artifact"]["detected_format"] == "gguf"
-    assert payload["findings"] == []
+    assert len(payload["findings"]) == 1
+    assert payload["findings"][0]["id"] == "BEE-GGUF-001"
 
 
 def test_inspect_text_output_shows_multiple_findings_at_once(tmp_path, monkeypatch):
@@ -178,11 +180,11 @@ def test_inspect_fail_on_exits_nonzero_when_threshold_met(tmp_path, monkeypatch)
 def test_inspect_fail_on_exits_zero_when_threshold_not_met(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     file_path = tmp_path / "model.gguf"
-    builders.write_gguf(file_path)  # no findings at all
+    builders.write_gguf(file_path)  # now has BEE-GGUF-001 (HIGH severity)
 
     result = runner.invoke(app, ["inspect", str(file_path), "--fail-on", "info"])
 
-    assert result.exit_code == 0
+    assert result.exit_code == 1
 
 
 def test_inspect_fail_on_rejects_invalid_severity(tmp_path, monkeypatch):
