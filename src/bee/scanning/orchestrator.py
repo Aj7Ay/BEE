@@ -149,15 +149,14 @@ class ScanOrchestrator:
         decision_str: str | None = None
         if policy is not None:
             evaluator = PolicyEvaluator()
-            _, policy_violations = evaluator.evaluate(
+            decision_obj, policy_violations = evaluator.evaluate(
                 policy=policy,
                 findings=findings,
                 provenance=provenance,
                 license_info=license_info,
                 vulnerabilities=vuln_findings,
             )
-            if policy_violations:
-                decision_str = Decision.BLOCK if any(v.action == "block" for v in policy_violations) else Decision.REVIEW if any(v.action == "review" for v in policy_violations) else Decision.ALLOW
+            decision_str = decision_obj.value if decision_obj else None
 
         run = Run.from_scan(
             target_path=str(target),

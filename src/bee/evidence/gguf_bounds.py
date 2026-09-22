@@ -105,7 +105,22 @@ def check_gguf_bounds(artifact: Artifact, content: bytes | None = None) -> Findi
         return None
     analysis = analyze_gguf(content if content is not None else Path(artifact.path))
     if analysis is None:
-        return None
+        # Detected as GGUF but header cannot be parsed - emit a finding
+        return Finding(
+            id="BEE-GGUF-001",
+            severity=Severity.HIGH,
+            title="Unparseable GGUF header",
+            description="File is detected as GGUF but the header cannot be parsed. This may indicate a corrupted or incomplete file.",
+            artifact_path=artifact.path,
+            evidence=[
+                Evidence(
+                    type="gguf_parse_error",
+                    value="header analysis failed",
+                    source="gguf_bounds",
+                    confidence=Confidence.VERIFIED,
+                ),
+            ],
+        )
 
     if len(analysis.tensors) > _MAX_TENSORS_CHECKED:
         return Finding(
