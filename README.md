@@ -1,9 +1,10 @@
-# BEE - AI/ML Model Supply-Chain Security Vetting
+![BEE Banner](./banner-bee.png)
 
-![Version](https://img.shields.io/badge/version-0.14.0-blue.svg)
+![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.10%2B-brightgreen.svg)
 ![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)
 ![Status](https://img.shields.io/badge/status-production--grade-brightgreen.svg)
+![Tests](https://img.shields.io/badge/tests-286%20passing-brightgreen.svg)
 
 **BEE** is a production-ready CLI tool for comprehensive security vetting of AI/ML model artifacts. Detect malicious code, track provenance, enforce policies, and generate security reports.
 
