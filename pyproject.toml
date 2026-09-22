@@ -7,7 +7,7 @@ license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 authors = [
-    { name = "Aj7Ay", email = "ajay@practical-devsecops.com" },
+    { name = "Aj7Ay", email = "ajayyegireddi007@gmail.com" },
 ]
 keywords = ["security", "ai", "ml", "model", "supply-chain", "provenance"]
 classifiers = [

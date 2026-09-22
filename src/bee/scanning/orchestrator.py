@@ -12,6 +12,7 @@ from bee.evidence.finding import Finding, Severity, Evidence, Confidence
 from bee.evidence.gguf_bounds import check_gguf_bounds
 from bee.evidence.mismatch import check_mismatch
 from bee.evidence.pickle_calls import check_pickle_calls
+from bee.evidence.provenance import build_provenance
 from bee.evidence.safetensors_bounds import check_safetensors_bounds, check_safetensors_gap
 from bee.evidence.symlink import build_symlink_escape_finding, is_escaping_symlink
 from bee.evidence.vulnerability import enrich_dependencies_with_vulns
@@ -112,7 +113,6 @@ class ScanOrchestrator:
                 findings.append(gguf_finding)
 
         # Build provenance (best-effort from local scan)
-        from bee.evidence.provenance import build_provenance
         provenance = self._build_local_provenance(target, artifacts)
 
         # Run code scanning via self.scan_code_files
@@ -315,7 +315,6 @@ class ScanOrchestrator:
 
     def _build_local_provenance(self, target: Path, artifacts: list[Artifact]) -> Provenance:
         """Build best-effort provenance for a local scan."""
-        from bee.evidence.provenance import build_provenance
         if artifacts:
             first = artifacts[0]
             return build_provenance(
