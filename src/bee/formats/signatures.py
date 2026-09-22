@@ -244,6 +244,11 @@ def detect_onnx(source: Source) -> DetectionResult | None:
     )
 
 
+# Detector order matters: the first detector to return non-None wins. ONNX
+# must come before pickle to ensure ONNX files are correctly classified when
+# they could theoretically parse as pickle. Both are protobuf/binary formats
+# with complex structures, but ONNX detection is more specific (requires valid
+# protobuf structure with multiple fields), so it should be tried first.
 DETECTORS: list = [
     detect_safetensors,
     detect_gguf,
@@ -252,6 +257,6 @@ DETECTORS: list = [
     detect_zip_based,
     detect_gzip,
     detect_tar,
-    detect_pickle,
     detect_onnx,
+    detect_pickle,
 ]

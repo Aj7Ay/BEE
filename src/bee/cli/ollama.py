@@ -125,7 +125,10 @@ def ollama_command(
             summary_table.add_row("Verdict", run_result.decision.upper())
         console.print(summary_table)
 
-    # Fail-closed: exit non-zero if any critical/high findings (unless explicitly allowed by policy)
+    # Fail-closed: exit non-zero if policy decision is block/review or critical/high findings present
+    if run_result.decision and run_result.decision in ("block", "review"):
+        raise typer.Exit(code=1)
+
     if run_result.severity_count(Severity.CRITICAL) > 0 or run_result.severity_count(Severity.HIGH) > 0:
         if not policy_obj or run_result.decision != "allow":
             raise typer.Exit(code=1)

@@ -87,7 +87,29 @@ class OllamaSource(Source):
             modelfile = data.get("modelfile", "")
             if modelfile:
                 for line in modelfile.splitlines():
-                    if line.startswith("ADD") and "blob" in line:
+                    line = line.strip()
+
+                    # Parse FROM directives (e.g., FROM /path/to/.ollama/models/blobs/sha256-...)
+                    if line.startswith("FROM"):
+                        parts = line.split(maxsplit=1)
+                        if len(parts) >= 2:
+                            from_path = parts[1].strip()
+                            # Check if it's a blob path (contains /blobs/ and a valid blob ref)
+                            if "/blobs/" in from_path:
+                                # Extract blob ref from path like .../blobs/sha256-...
+                                try:
+                                    blob_ref = from_path.split("/blobs/")[-1]
+                                    if self._is_safe_blob_ref(blob_ref):
+                                        # Construct full blob path
+                                        ollama_dir = Path(os.environ.get("OLLAMA_MODELS", Path.home() / ".ollama" / "models"))
+                                        blob_path = ollama_dir / "blobs" / blob_ref
+                                        if blob_path.is_file():
+                                            artifacts.append(blob_path)
+                                except (IndexError, ValueError):
+                                    pass
+
+                    # Parse ADD directives (e.g., ADD sha256-... blob)
+                    elif line.startswith("ADD") and "blob" in line:
                         parts = line.split()
                         if len(parts) >= 2:
                             blob_ref = parts[1]

@@ -110,3 +110,93 @@ class TestOllamaSource:
 
             # File should still exist
             assert test_file.exists()
+
+    def test_parse_from_directive_in_modelfile(self):
+        """Test that FROM directives pointing to blob paths are parsed correctly."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create a mock blob file
+            ollama_dir = Path(tmpdir) / ".ollama" / "models"
+            blobs_dir = ollama_dir / "blobs"
+            blobs_dir.mkdir(parents=True)
+            blob_file = blobs_dir / "sha256-abcdef1234567890"
+            blob_file.write_bytes(b"fake model content")
+
+            source = OllamaSource("qwen3:8b")
+
+            # Mock the API response with a FROM directive
+            modelfile = "FROM /path/to/.ollama/models/blobs/sha256-abcdef1234567890\nPARAMETER temperature 0.7"
+            mock_response = {
+                "modelfile": modelfile,
+                "parameters": "test",
+                "format": "gguf"
+            }
+
+            with patch("bee.sources.ollama.requests.post") as mock_post:
+                with patch.dict("os.environ", {"OLLAMA_MODELS": str(ollama_dir)}):
+                    mock_post.return_value.json.return_value = mock_response
+
+                    artifacts = source.get_artifacts()
+                    assert len(artifacts) == 1, "Should parse FROM directive and find artifact"
+                    assert artifacts[0] == blob_file, "Should identify the correct blob file"
+
+    def test_parse_add_directive_in_modelfile(self):
+        """Test that ADD directives with blob references are parsed correctly."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create a mock blob file
+            ollama_dir = Path(tmpdir) / ".ollama" / "models"
+            blobs_dir = ollama_dir / "blobs"
+            blobs_dir.mkdir(parents=True)
+            blob_file = blobs_dir / "sha256-fedcba0987654321"
+            blob_file.write_bytes(b"fake model content")
+
+            source = OllamaSource("llama2:7b")
+
+            # Mock the API response with an ADD directive
+            modelfile = "FROM base\nADD sha256-fedcba0987654321 blob"
+            mock_response = {
+                "modelfile": modelfile,
+                "parameters": "test",
+                "format": "gguf"
+            }
+
+            with patch("bee.sources.ollama.requests.post") as mock_post:
+                with patch.dict("os.environ", {"OLLAMA_MODELS": str(ollama_dir)}):
+                    mock_post.return_value.json.return_value = mock_response
+
+                    artifacts = source.get_artifacts()
+                    assert len(artifacts) == 1, "Should parse ADD directive and find artifact"
+                    assert artifacts[0] == blob_file, "Should identify the correct blob file"
+
+    def test_parse_both_from_and_add_directives(self):
+        """Test that both FROM and ADD directives are parsed in the same modelfile."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create mock blob files
+            ollama_dir = Path(tmpdir) / ".ollama" / "models"
+            blobs_dir = ollama_dir / "blobs"
+            blobs_dir.mkdir(parents=True)
+
+            blob_file1 = blobs_dir / "sha256-from1234567890"
+            blob_file1.write_bytes(b"model content 1")
+
+            blob_file2 = blobs_dir / "sha256-add9876543210"
+            blob_file2.write_bytes(b"model content 2")
+
+            source = OllamaSource("qwen3:8b")
+
+            # Mock the API response with both FROM and ADD directives
+            modelfile = "FROM /path/to/.ollama/models/blobs/sha256-from1234567890\nADD sha256-add9876543210 blob"
+            mock_response = {
+                "modelfile": modelfile,
+                "parameters": "test",
+                "format": "gguf"
+            }
+
+            with patch("bee.sources.ollama.requests.post") as mock_post:
+                with patch.dict("os.environ", {"OLLAMA_MODELS": str(ollama_dir)}):
+                    mock_post.return_value.json.return_value = mock_response
+
+                    artifacts = source.get_artifacts()
+                    assert len(artifacts) == 2, "Should parse both FROM and ADD directives"
+                    artifact_paths = {str(a) for a in artifacts}
+                    assert str(blob_file1) in artifact_paths, "Should find FROM blob"
+                    assert str(blob_file2) in artifact_paths, "Should find ADD blob"
