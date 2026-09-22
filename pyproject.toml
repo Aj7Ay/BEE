@@ -27,6 +27,10 @@ dependencies = [
     "pydantic>=2.6",
     "rich>=13.7",
     "cryptography>=42.0",
+    "pyyaml>=6.0",
+    "requests>=2.31",
+    "huggingface_hub>=0.20",
+    "tomli>=1.2.0;python_version<'3.11'",
 ]
 
 [project.urls]

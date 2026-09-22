@@ -9,11 +9,15 @@ from bee.cli.history import history_command
 from bee.cli.init import init_command
 from bee.cli.inspect import inspect_command
 from bee.cli.keygen import keygen_command
+from bee.cli.modelcard import modelcard_command
+from bee.cli.ollama import ollama_command
+from bee.cli.report import report_command
 from bee.cli.scan import scan_command
 from bee.cli.show import show_command
 from bee.cli.sign import sign_command
 from bee.cli.state import AppState, OutputFormat
 from bee.cli.verify import verify_command
+from bee.cli.vet import vet_command
 
 app = typer.Typer(help="BEE - AI model supply-chain vetting CLI.")
 
@@ -53,3 +57,7 @@ app.command("show")(show_command)
 app.command("verify")(verify_command)
 app.command("keygen")(keygen_command)
 app.command("sign")(sign_command)
+app.command("vet")(vet_command)
+app.command("ollama")(ollama_command)
+app.command("report")(report_command)
+app.command("modelcard")(modelcard_command)

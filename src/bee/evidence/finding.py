@@ -35,3 +35,7 @@ class Finding(BaseModel):
     description: str
     artifact_path: str
     evidence: list[Evidence]
+    category: str = "format"
+    line_number: int | None = None
+    code_pattern: str = ""
+    recommendation: str = ""

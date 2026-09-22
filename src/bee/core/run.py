@@ -70,6 +70,41 @@ def compute_evidence_hash(
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+class SourceInfo(BaseModel):
+    provider: str
+    repository: str | None = None
+    revision: str | None = None
+
+
+class PublisherInfo(BaseModel):
+    name: str | None = None
+    verified: bool = False
+
+
+class ArtifactInfo(BaseModel):
+    filename: str
+    sha256: str
+    size: int
+
+
+class AcquisitionInfo(BaseModel):
+    method: str
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class SignatureInfo(BaseModel):
+    present: bool = False
+    verified: bool = False
+
+
+class Provenance(BaseModel):
+    source: SourceInfo
+    publisher: PublisherInfo = Field(default_factory=PublisherInfo)
+    artifact: ArtifactInfo
+    acquisition: AcquisitionInfo = Field(default_factory=AcquisitionInfo)
+    signature: SignatureInfo = Field(default_factory=SignatureInfo)
+
+
 class Run(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -97,6 +132,33 @@ class Run(BaseModel):
     # requires the private key, which is never stored here.
     signature: str = ""
     public_key: str = ""
+    provenance: Provenance | None = None
+    decision: str | None = None
+    license_info: dict | None = None
+    vulnerabilities: list[dict] = Field(default_factory=list)
+    model_card: dict | None = None
+    dependencies: list[dict] = Field(default_factory=list)
+
+    @property
+    def target(self) -> Path:
+        return Path(self.target_path)
+
+    @property
+    def version(self) -> str:
+        return self.scanner_version
+
+    def severity_count(self, severity: Severity) -> int:
+        return self.summary.findings_by_severity.get(severity, 0)
+
+    @property
+    def timestamp(self) -> float:
+        return self.created_at.timestamp()
+
+    def to_html(self, output_path: Path | None = None) -> str:
+        """Generate HTML report and optionally save to file."""
+        from bee.reports.html import HTMLReport
+        reporter = HTMLReport(self)
+        return reporter.generate(output_path)
 
     @classmethod
     def from_scan(
@@ -105,6 +167,11 @@ class Run(BaseModel):
         artifacts: list[Artifact],
         findings: list[Finding],
         deterministic: bool = False,
+        provenance: Provenance | None = None,
+        decision: str | None = None,
+        license_info: dict | None = None,
+        vulnerabilities: list[dict] | None = None,
+        model_card: dict | None = None,
     ) -> "Run":
         summary = build_summary(artifacts, findings)
         evidence_sha256 = compute_evidence_hash(target_path, artifacts, findings, __version__)
@@ -120,6 +187,11 @@ class Run(BaseModel):
                 summary=summary,
                 scanner_version=__version__,
                 evidence_sha256=evidence_sha256,
+                provenance=provenance,
+                decision=decision,
+                license_info=license_info,
+                vulnerabilities=vulnerabilities or [],
+                model_card=model_card,
             )
         return cls(
             target_path=target_path,
@@ -129,4 +201,9 @@ class Run(BaseModel):
             summary=summary,
             scanner_version=__version__,
             evidence_sha256=evidence_sha256,
+            provenance=provenance,
+            decision=decision,
+            license_info=license_info,
+            vulnerabilities=vulnerabilities or [],
+            model_card=model_card,
         )
