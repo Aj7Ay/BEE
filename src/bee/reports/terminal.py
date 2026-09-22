@@ -53,13 +53,14 @@ def render_run(run: Run) -> None:
     # Display policy decision and violations if present
     if run.decision:
         console.print()
-        decision_style = "[bold red]" if run.decision == "BLOCK" else "[bold yellow]" if run.decision == "REVIEW" else "[bold green]"
-        console.print(f"{decision_style}Decision: {run.decision}[/{decision_style.split(']')[0]}]")
+        styles = {"block": "bold red", "review": "bold yellow", "allow": "bold green"}
+        style = styles.get(run.decision, "bold white")
+        console.print(f"[{style}]Decision: {run.decision.upper()}[/{style}]")
         if run.policy_violations:
             for violation in run.policy_violations:
-                reason = violation.get("reason", "No reason provided")
+                description = violation.get("description", "No reason provided")
                 action = violation.get("action", "unknown")
-                console.print(f"  [{action}] {reason}")
+                console.print(f"  [{action}] {description}")
 
     # Critical/high findings are surfaced explicitly, not just folded into
     # the aggregate count above — a finding whose artifact isn't in the
