@@ -263,6 +263,22 @@ class ScanOrchestrator:
                 acquisition_method=source.source_type,
             )
 
+        # Run policy evaluation against policy if provided
+        decision_str: str | None = None
+        policy_violations_list: list[dict] = []
+        if policy is not None:
+            evaluator = PolicyEvaluator()
+            decision_obj, policy_violations = evaluator.evaluate(
+                policy=policy,
+                findings=findings,
+                provenance=provenance,
+                license_info=None,
+                vulnerabilities=[],
+                artifacts=artifact_objs,
+            )
+            decision_str = decision_obj.value if decision_obj else None
+            policy_violations_list = [v.model_dump(mode="json") if hasattr(v, "model_dump") else v for v in policy_violations]
+
         run = Run.from_scan(
             target_path=source.url if hasattr(source, "url") and source.url else source.source_type,
             artifacts=artifact_objs,
@@ -270,21 +286,10 @@ class ScanOrchestrator:
             deterministic=self.config.deterministic,
             provenance=provenance,
             vulnerabilities=[],
+            decision=decision_str,
+            policy_violations=policy_violations_list,
             model_card=model_card,
         )
-
-        if policy is not None:
-            evaluator = PolicyEvaluator()
-            _, policy_violations = evaluator.evaluate(
-                policy=policy,
-                findings=findings,
-                provenance=provenance,
-                license_info=run.license_info,
-                vulnerabilities=[],
-                artifacts=artifact_objs,
-            )
-            if policy_violations:
-                run.decision = Decision.BLOCK if any(v.action == "block" for v in policy_violations) else Decision.REVIEW if any(v.action == "review" for v in policy_violations) else Decision.ALLOW
 
         if self.config.output_dir and self.config.write_evidence_files:
             self._write_evidence_files(run, self.config.output_dir)
