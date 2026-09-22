@@ -169,6 +169,7 @@ class ScanOrchestrator:
             decision=decision_str,
             license_info=license_info,
             model_card=model_card,
+            dependencies=[d.model_dump(mode="json") for d in enriched_deps],
         )
 
         # Write evidence files if configured

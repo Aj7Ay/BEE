@@ -214,30 +214,6 @@ uv run pytest
 uv run ruff check src/
 ```
 
-## Version History
-
-- **0.14.0** - HTML report integration, code & dependency scanners
-- **0.13.0** - Full code and dependency scanning with vulnerability lookup
-- **0.12.0** - Policy engine wiring, fail-closed verdict logic
-- **0.11.0** - Experimental: provenance, policy, licensing (scaffolding)
-- **0.10.0** - GGUF tensor-overlap detection
-- **0.9.2** - Python 3.10+ support
-- **0.9.1** - Pickle declared-size bounds
-- **0.9.0** - Opcode-cap detection bypass fix, terminal sanitization
-- Earlier: Foundational format detection, signing, verification
-
-## Status by Phase
-
-| Feature | Version | Status |
-|---------|---------|--------|
-| Core scanning (scan, inspect) | 0.1-0.10 | ✅ Production |
-| Signing & verification | 0.7-0.9 | ✅ Production |
-| Policy engine | 0.12 | ✅ Production |
-| Code & dependency scanners | 0.13 | ✅ Production |
-| HTML reports | 0.14 | ✅ Production |
-| Ollama support | 0.15 | 🔄 Experimental |
-| HuggingFace support | 0.16 | 🔄 Experimental |
-
 ## License
 
 Apache License 2.0 — see LICENSE file

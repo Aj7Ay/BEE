@@ -172,6 +172,7 @@ class Run(BaseModel):
         license_info: dict | None = None,
         vulnerabilities: list[dict] | None = None,
         model_card: dict | None = None,
+        dependencies: list[dict] | None = None,
     ) -> "Run":
         summary = build_summary(artifacts, findings)
         evidence_sha256 = compute_evidence_hash(target_path, artifacts, findings, __version__)
@@ -192,6 +193,7 @@ class Run(BaseModel):
                 license_info=license_info,
                 vulnerabilities=vulnerabilities or [],
                 model_card=model_card,
+                dependencies=dependencies or [],
             )
         return cls(
             target_path=target_path,
@@ -206,4 +208,5 @@ class Run(BaseModel):
             license_info=license_info,
             vulnerabilities=vulnerabilities or [],
             model_card=model_card,
+            dependencies=dependencies or [],
         )
