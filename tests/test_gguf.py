@@ -312,7 +312,12 @@ def test_deeply_nested_metadata_array_does_not_crash(tmp_path):
     # Also drive it through the finding path end-to-end, same as a real scan would.
     artifact = _artifact_for(path)
     assert artifact.detected_format == "gguf"  # shallow magic-only detection still applies
-    assert check_gguf_bounds(artifact) is None
+    # Deeply nested metadata may cause parsing to fail - now emits a finding instead of None
+    finding = check_gguf_bounds(artifact)
+    # Either no finding (if it parses) or a high-severity finding if parsing fails
+    if finding is not None:
+        assert finding.id == "BEE-GGUF-001"
+        assert finding.severity.value == "high"
 
 
 def test_array_nesting_just_under_cap_still_parses(tmp_path):
@@ -348,14 +353,17 @@ def test_oversized_string_length_rejected_without_large_allocation(tmp_path):
     assert elapsed < 1.0
 
 
-def test_none_for_minimal_synthetic_fixture(tmp_path):
+def test_minimal_synthetic_fixture_emits_unparseable_finding(tmp_path):
     # tests/fixtures/builders.py's write_gguf() writes only a bare 16-byte
     # magic+version+zeroed-counts header -- enough for shallow detection
     # (detect_gguf) but not a real tensor_count/kv_count header analyze_gguf
-    # can parse. check_gguf_bounds must degrade to "nothing to report", not
-    # crash or fabricate a finding, when the deep parse fails.
+    # can parse. check_gguf_bounds now emits a finding for unparseable GGUF
+    # (issue #2: fail-open on unparseable GGUF).
     path = tmp_path / "minimal.gguf"
     builders.write_gguf(path)
     artifact = _artifact_for(path)
     assert artifact.detected_format == "gguf"
-    assert check_gguf_bounds(artifact) is None
+    finding = check_gguf_bounds(artifact)
+    assert finding is not None
+    assert finding.id == "BEE-GGUF-001"
+    assert finding.severity.value == "high"
