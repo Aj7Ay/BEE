@@ -60,7 +60,7 @@ def render_run(run: Run) -> None:
             for violation in run.policy_violations:
                 description = violation.get("description", "No reason provided")
                 action = violation.get("action", "unknown")
-                console.print(f"  [{action}] {description}")
+                console.print(f"  \\[{action}] {description}")
 
     # Critical/high findings are surfaced explicitly, not just folded into
     # the aggregate count above — a finding whose artifact isn't in the
