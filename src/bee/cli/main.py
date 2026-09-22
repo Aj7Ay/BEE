@@ -11,6 +11,7 @@ from bee.cli.inspect import inspect_command
 from bee.cli.keygen import keygen_command
 from bee.cli.modelcard import modelcard_command
 from bee.cli.ollama import ollama_command
+from bee.cli.policy import policy_validate
 from bee.cli.report import report_command
 from bee.cli.scan import scan_command
 from bee.cli.show import show_command
@@ -61,3 +62,4 @@ app.command("vet")(vet_command)
 app.command("ollama")(ollama_command)
 app.command("report")(report_command)
 app.command("modelcard")(modelcard_command)
+app.command("policy")(policy_validate)

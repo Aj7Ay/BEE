@@ -41,6 +41,7 @@ def vet_command(
     deterministic: bool = typer.Option(False, "--deterministic", help="Stable run ID for diffing."),
     follow_symlinks: bool = typer.Option(False, "--follow-symlinks", help="Follow escaping symlinks."),
     output: Path = typer.Option(None, "-o", "--output", help="Output directory for evidence files."),
+    policy: Path = typer.Option(None, "--policy", help="Policy YAML file for vetting gate."),
 ) -> None:
     """Vet an AI model artifact for security, integrity, and provenance.
 
@@ -52,6 +53,12 @@ def vet_command(
     threshold = parse_severity_option(fail_on) if fail_on is not None else None
     db_path = db or state.db_path
     scan_root = path if path.is_dir() else path.parent
+
+    # Load policy if provided
+    policy_obj = None
+    if policy:
+        from bee.policy.loader import load_policy
+        policy_obj = load_policy(policy)
 
     config = ScanConfig(
         fail_on=fail_on,
@@ -68,14 +75,17 @@ def vet_command(
         transient=True,
     ) as progress:
         task = progress.add_task("Scanning target...", total=None)
-        run_result = orchestrator.scan_local(path, workspace_dir=db_path.parent)
+        run_result = orchestrator.scan_local(path, workspace_dir=db_path.parent, policy=policy_obj)
         progress.update(task, description="Analyzing dependencies...")
         progress.update(task, description="Checking vulnerabilities...")
-        progress.update(task, description="Evaluating policy...")
+        if policy_obj:
+            progress.update(task, description="Evaluating policy...")
 
     if state.output_format is OutputFormat.JSON:
         import json as jsonlib
-        typer.echo(run_result.model_dump_json(indent=2))
+        output_dict = run_result.model_dump(mode="json")
+        output_dict["verdict"] = run_result.decision or "allow"
+        typer.echo(jsonlib.dumps(output_dict, indent=2))
     else:
         from bee.reports.terminal import render_run
         render_run(run_result)
@@ -90,6 +100,13 @@ def vet_command(
         summary_table.add_row("Medium", str(run_result.severity_count(Severity.MEDIUM)))
         summary_table.add_row("Low", str(run_result.severity_count(Severity.LOW)))
         summary_table.add_row("Info", str(run_result.severity_count(Severity.INFO)))
+        if run_result.decision:
+            summary_table.add_row("Verdict", run_result.decision.upper())
         console.print(summary_table)
+
+    # Fail-closed: exit non-zero if any critical/high findings (unless explicitly allowed by policy)
+    if run_result.severity_count(Severity.CRITICAL) > 0 or run_result.severity_count(Severity.HIGH) > 0:
+        if not policy_obj or run_result.decision != "allow":
+            raise typer.Exit(code=1)
 
     exit_if_threshold_met(run_result.findings, threshold)

@@ -117,6 +117,7 @@ def _build_security_section(run: Run) -> str:
     if r.provenance:
         p = r.provenance
         source = p.source
+        artifact = p.artifact
         provenance = (
             "\n"
             "## Provenance\n\n"
@@ -125,8 +126,8 @@ def _build_security_section(run: Run) -> str:
             f"| Provider | {source.provider} |\n"
             f"| Repository | {source.repository or 'N/A'} |\n"
             f"| Revision | {source.revision or 'N/A'} |\n"
-            f"| SHA-256 | `{p.artifact_hash[:64]}` |\n"
-            f"| Size | {p.artifact_size:,} bytes |\n"
+            f"| SHA-256 | `{artifact.sha256[:64] if artifact.sha256 else 'N/A'}` |\n"
+            f"| Size | {artifact.size:,} bytes |\n"
         )
 
     # Vulnerabilities
@@ -147,12 +148,13 @@ def _build_security_section(run: Run) -> str:
     findings_section = ""
     if r.findings:
         findings_rows = (
-            "| ID | Severity | Category | Message |\n"
-            "|----|----------|----------|---------|\n"
+            "| ID | Severity | Category | Description |\n"
+            "|-------|----------|----------|-------------|\n"
         )
         for f in sorted(r.findings, key=lambda x: x.severity.value):
+            desc = f.description[:100] if f.description else f.title
             findings_rows += (
-                f"| {f.id} | {f.severity.value} | {f.category} | {f.message} |\n"
+                f"| {f.id} | {f.severity.value} | {f.category} | {desc} |\n"
             )
         findings_section = f"\n## Detailed Findings\n\n{findings_rows}\n"
 
