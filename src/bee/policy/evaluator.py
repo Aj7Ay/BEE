@@ -56,6 +56,8 @@ class PolicyEvaluator:
         violations.extend(self._check_findings(findings, policy.findings))
         violations.extend(self._check_code(findings, policy.custom_code))
         violations.extend(self._check_provenance(provenance, policy))
+        violations.extend(self._check_signature(provenance, policy.signature))
+        violations.extend(self._check_integrity(provenance, policy.integrity))
         violations.extend(self._check_licenses(license_info, policy.licenses))
         violations.extend(self._check_vulnerabilities(vulnerabilities, policy.vulnerabilities))
 
@@ -66,11 +68,15 @@ class PolicyEvaluator:
     def _check_formats(
         self, findings: list[Finding], fmt_policy: FormatPolicy
     ) -> list[PolicyViolation]:
-        blocked_findings = [f for f in findings if f.id == "BEE-FMT-001"]
-        if blocked_findings:
+        # Only enforce format blocking if formats are actually configured in policy
+        if not fmt_policy.blocked:
+            return []
+
+        format_findings = [f for f in findings if f.id == "BEE-FMT-001"]
+        if format_findings:
             return [PolicyViolation(
                 policy_rule="formats.blocked",
-                description="Format mismatch detected — file may be mislabeled or tampered",
+                description=f"Format mismatch detected ({len(format_findings)} finding(s)) — file may be mislabeled or tampered",
                 action=Action.BLOCK,
             )]
         return []
@@ -147,6 +153,39 @@ class PolicyEvaluator:
 
         return violations
 
+    def _check_signature(
+        self, provenance: Provenance | None, sig_policy
+    ) -> list[PolicyViolation]:
+        """Check if signature requirements are met."""
+        if not sig_policy.required:
+            return []
+
+        if not provenance or not provenance.signature.present:
+            return [PolicyViolation(
+                policy_rule="signature.required",
+                description="Signature required but not present",
+                action=Action.BLOCK,
+            )]
+
+        return []
+
+    def _check_integrity(
+        self, provenance: Provenance | None, integrity_policy
+    ) -> list[PolicyViolation]:
+        """Check if integrity requirements are met."""
+        if not integrity_policy.require_sha256:
+            return []
+
+        # Only enforce if provenance was provided
+        if provenance and not provenance.artifact.sha256:
+            return [PolicyViolation(
+                policy_rule="integrity.require_sha256",
+                description="SHA256 hash required but not available",
+                action=Action.BLOCK,
+            )]
+
+        return []
+
     def _check_licenses(
         self, license_info: dict | None, lic_policy: LicensePolicy
     ) -> list[PolicyViolation]:
@@ -187,7 +226,9 @@ class PolicyEvaluator:
         }
 
         for severity, action in severity_map.items():
-            sev_vulns = [v for v in vulnerabilities if v.get("severity", "").lower() == severity]
+            # Normalize "moderate" to "medium" for OSV compatibility
+            sev_vulns = [v for v in vulnerabilities if (v.get("severity", "").lower() == severity or
+                         (severity == "medium" and v.get("severity", "").lower() == "moderate"))]
             if sev_vulns and action == Action.BLOCK:
                 return [PolicyViolation(
                     policy_rule=f"vulnerabilities.{severity}",

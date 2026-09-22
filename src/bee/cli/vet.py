@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import typer
@@ -10,6 +11,7 @@ from bee.core.run import Run
 from bee.evidence.finding import Severity
 from bee.scanning.config import ScanConfig
 from bee.scanning.orchestrator import ScanOrchestrator
+from bee.storage.db import save_run
 
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -124,6 +126,12 @@ def vet_command(
         if run_result.decision:
             summary_table.add_row("Verdict", run_result.decision.upper())
         console.print(summary_table)
+
+    # Save vet run to database
+    try:
+        save_run(db_path, run_result)
+    except (sqlite3.Error, OSError) as exc:
+        typer.echo(f"Warning: could not save run to {db_path}: {exc}", err=True)
 
     # Fail-closed: exit non-zero if any critical/high findings (unless explicitly allowed by policy)
     if run_result.severity_count(Severity.CRITICAL) > 0 or run_result.severity_count(Severity.HIGH) > 0:
