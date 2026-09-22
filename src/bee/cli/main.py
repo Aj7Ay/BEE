@@ -6,6 +6,7 @@ import typer
 
 from bee import __version__
 from bee.cli.history import history_command
+from bee.cli.huggingface import huggingface_command
 from bee.cli.init import init_command
 from bee.cli.inspect import inspect_command
 from bee.cli.keygen import keygen_command
@@ -60,6 +61,7 @@ app.command("keygen")(keygen_command)
 app.command("sign")(sign_command)
 app.command("vet")(vet_command)
 app.command("ollama")(ollama_command)
+app.command("hf")(huggingface_command)
 app.command("report")(report_command)
 app.command("modelcard")(modelcard_command)
 app.command("policy")(policy_validate)
