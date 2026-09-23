@@ -200,3 +200,60 @@ class TestOllamaSource:
                     artifact_paths = {str(a) for a in artifacts}
                     assert str(blob_file1) in artifact_paths, "Should find FROM blob"
                     assert str(blob_file2) in artifact_paths, "Should find ADD blob"
+
+    def test_reject_from_path_with_blobs_but_invalid_ref(self):
+        """Test that FROM paths with /blobs/ but non-sha256 refs are rejected."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ollama_dir = Path(tmpdir) / ".ollama" / "models"
+            blobs_dir = ollama_dir / "blobs"
+            blobs_dir.mkdir(parents=True)
+
+            source = OllamaSource("qwen3:8b")
+
+            # Modelfile with FROM pointing to /blobs/ but with invalid ref (no sha256- prefix)
+            modelfile = "FROM /path/to/.ollama/models/blobs/invalid-ref"
+            mock_response = {
+                "modelfile": modelfile,
+                "parameters": "test",
+                "format": "gguf"
+            }
+
+            with patch("bee.sources.ollama.requests.post") as mock_post:
+                with patch.dict("os.environ", {"OLLAMA_MODELS": str(ollama_dir)}):
+                    mock_post.return_value.json.return_value = mock_response
+
+                    artifacts = source.get_artifacts()
+                    # Should not find any artifacts because ref doesn't match sha256- pattern
+                    assert len(artifacts) == 0, "Should reject blob ref without sha256- prefix"
+
+    def test_reject_from_path_outside_ollama_dir(self):
+        """Test that FROM paths outside OLLAMA_MODELS directory are rejected (security fix)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ollama_dir = Path(tmpdir) / ".ollama" / "models"
+            ollama_dir.mkdir(parents=True)
+
+            # Create a file outside the ollama directory with /blobs/ in the path
+            outside_dir = Path(tmpdir) / "etc" / "passwd" / "blobs"
+            outside_dir.mkdir(parents=True)
+            malicious_file = outside_dir / "sha256-fake"
+            malicious_file.write_bytes(b"sensitive data")
+
+            source = OllamaSource("qwen3:8b")
+
+            # Modelfile with FROM pointing to a path with /blobs/ but outside the model store
+            modelfile = f"FROM {malicious_file}"
+            mock_response = {
+                "modelfile": modelfile,
+                "parameters": "test",
+                "format": "gguf"
+            }
+
+            with patch("bee.sources.ollama.requests.post") as mock_post:
+                with patch.dict("os.environ", {"OLLAMA_MODELS": str(ollama_dir)}):
+                    mock_post.return_value.json.return_value = mock_response
+
+                    artifacts = source.get_artifacts()
+                    # Should not find any artifacts because path is outside ollama_dir
+                    assert len(artifacts) == 0, "Should reject blob paths outside OLLAMA_MODELS directory"
+                    # Verify the malicious file was NOT accessed
+                    assert str(malicious_file) not in [str(a) for a in artifacts]

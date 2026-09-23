@@ -8,12 +8,12 @@ from bee.sources.base import Source
 
 
 _MODEL_EXTENSIONS = frozenset({
-    ".safetensors", ".gguf", ".bin", ".pt", ".pth", ".onnx", ".pkl",
+    ".safetensors", ".gguf", ".bin", ".pt", ".pth", ".pkl",
     ".h5", ".hdf5",
 })
 
 _MODEL_FILENAMES = frozenset({
-    "pytorch_model", "model", "consolidated", "checkpoint",
+    "pytorch_model", "consolidated", "checkpoint",
     "model.safetensors", "model.gguf",
 })
 

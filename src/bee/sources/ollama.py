@@ -90,24 +90,32 @@ class OllamaSource(Source):
                         parts = line.split(maxsplit=1)
                         if len(parts) >= 2:
                             from_path = parts[1].strip()
-                            # Check if it's a blob path (contains /blobs/ and a valid blob ref)
+                            # Check if it's a blob path - must contain /blobs/sha256- pattern
                             if "/blobs/" in from_path:
-                                # Try to use the FROM path directly if it exists and is safe
-                                blob_path = Path(from_path)
-                                if blob_path.is_file():
-                                    artifacts.append(blob_path)
-                                else:
-                                    # Extract blob ref and try standard locations
-                                    try:
-                                        blob_ref = from_path.split("/blobs/")[-1]
-                                        if self._is_safe_blob_ref(blob_ref):
-                                            # Try standard Ollama locations
-                                            ollama_dir = Path(os.environ.get("OLLAMA_MODELS", Path.home() / ".ollama" / "models"))
-                                            blob_path = ollama_dir / "blobs" / blob_ref
-                                            if blob_path.is_file():
-                                                artifacts.append(blob_path)
-                                    except (IndexError, ValueError):
-                                        pass
+                                try:
+                                    # Extract blob ref (must be after /blobs/)
+                                    blob_ref = from_path.split("/blobs/")[-1]
+
+                                    # Validate blob ref: must be safe and match sha256- pattern
+                                    if not self._is_safe_blob_ref(blob_ref) or not blob_ref.startswith("sha256-"):
+                                        continue
+
+                                    # Get standard Ollama directory
+                                    ollama_dir = Path(os.environ.get("OLLAMA_MODELS", Path.home() / ".ollama" / "models"))
+                                    ollama_dir_resolved = ollama_dir.resolve()
+
+                                    # Try absolute path from FROM directive first
+                                    blob_path = Path(from_path).resolve()
+                                    # Ensure resolved path is under ollama_dir
+                                    if blob_path.is_file() and str(blob_path).startswith(str(ollama_dir_resolved)):
+                                        artifacts.append(blob_path)
+                                    else:
+                                        # Fall back to standard location
+                                        blob_path = ollama_dir / "blobs" / blob_ref
+                                        if blob_path.is_file():
+                                            artifacts.append(blob_path)
+                                except (IndexError, ValueError):
+                                    pass
 
                     # Parse ADD directives (e.g., ADD sha256-... blob)
                     elif line.startswith("ADD") and "blob" in line:

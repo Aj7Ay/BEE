@@ -61,6 +61,15 @@ class TestHuggingFaceSource:
         assert not source._is_model_file("config.json")
         assert not source._is_model_file("tokenizer.json")
 
+    def test_onnx_files_excluded(self):
+        """Test that ONNX files are not detected as model files."""
+        source = HuggingFaceSource("test/model")
+
+        # ONNX files should be rejected (no longer in _MODEL_EXTENSIONS)
+        assert not source._is_model_file("model.onnx")
+        assert not source._is_model_file("model-quantized.onnx")
+        assert not source._is_model_file("encoder.onnx")
+
     def test_cleanup_is_safe(self):
         """Test that cleanup handles missing temp directory gracefully."""
         source = HuggingFaceSource("test/model")
